@@ -76,7 +76,11 @@ pub enum Function {
 }
 
 impl Function {
-    pub fn run<'s>(&'s self, scope: &'s Scope<'s>, stack: Vec<Variable>) -> Result<(Variable, usize), Error> {
+    pub fn run<'s>(
+        &'s self, 
+        mut scope: Scope<'s>, 
+        stack: Vec<Token> 
+    ) -> Result<(Variable, usize), Error> {
         match self {
             Function::Rust(function, parameters) => {
                 if stack.len() > parameters.len() {
@@ -85,7 +89,13 @@ impl Function {
                     return Err(Error::InvalidFunctionCall("Too few parameters"));
                 } 
 
-                Ok((function(stack), 0))
+                let mut params = Vec::new();
+
+                for s in stack {
+                    params.push(s.resolve(&mut scope)?);
+                }
+
+                Ok((function(params), 0))
             },
             Function::Native(instructions, parameters) => {
                 if stack.len() > parameters.len() {
@@ -94,25 +104,29 @@ impl Function {
                     return Err(Error::InvalidFunctionCall("Too few parameters"));
                 } 
 
-                let mut child_scope = scope.child(&instructions);
-
-                child_scope.locals = Locals::new();
+                scope.instructions = instructions;
+                let mut locals = HashMap::new();
 
                 for (v, p) in stack.iter().zip(parameters.iter()) {
-                    if let Variable::Ref(Ref::Local(reference)) = v {
-                        let global = scope.locals.get(reference).expect("yeet");
-                        
-                        child_scope.stack_len += 1;
-                        child_scope.locals.insert(p.0.clone(), child_scope.stack.borrow().len());
-                        child_scope.stack.borrow_mut().push(Variable::Ref(Ref::Global(*global)));
-                    } else {
-                        child_scope.stack_len += 1;
-                        child_scope.locals.insert(p.0.clone(), child_scope.stack.borrow().len());
-                        child_scope.stack.borrow_mut().push(v.clone());
+                    let index = scope.stack.borrow().len();
+                    scope.stack.borrow_mut().push(Variable::Null);
+                    
+                    let mut value = v.resolve(&mut scope)?;
+                    
+                    if let Variable::Ref(Ref::Local(reference)) = value {
+                        value = Variable::Ref(Ref::Global(*scope.locals.get(&reference).unwrap()));
                     }
+
+                    scope.stack.borrow_mut()[index] = value;
+                    locals.insert(p.0.clone(), index);
+                    scope.stack_len += 1;
                 }
 
-                child_scope.run()
+                scope.locals = locals;
+
+                let var = scope.run()?;
+
+                Ok(var)
             }
         }
     } 
@@ -122,6 +136,7 @@ impl Function {
 pub enum Ref {
     Global(usize),
     Local(String),
+    Heap(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -134,7 +149,8 @@ pub enum Variable {
     String(String),
     Null,
     FunctionRef(String),
-    Array(Vec<Variable>),
+    Slice(usize, usize, usize),
+    Array(usize),
     Struct(HashMap<String, usize>),
 }
 
@@ -182,6 +198,17 @@ impl Variable {
 
         Err(super::ParseError::VariableParseFailiure(string))
     }
+
+    pub fn free(&self, scope: &mut Scope) {
+        match self {
+            Variable::Slice(location, elems, elem_len) => {
+                for elem in 0..*elems * elem_len {
+                    scope.heap.borrow_mut().remove(&(location + elem));
+                }
+            },
+            _ => ()
+        }
+    }
 }
 add_variable_operator!(add, +, "Add");
 add_variable_operator!(sub, -, "Sub");
@@ -206,8 +233,9 @@ pub enum Token {
     Deref(Box<Token>, usize),
     FunctionCall(Box<Token>, Vec<Token>),
     AccessField(Box<Token>, String),
-    Index(Box<Token>, Box<Token>),
+    Index(Box<Token>, Box<Token>, usize),
     InitStruct(Vec<(String, Token)>),
+    InitArray(Vec<Token>),
     Add(Box<Token>, Box<Token>),
     Sub(Box<Token>, Box<Token>),
     Mul(Box<Token>, Box<Token>),
@@ -228,6 +256,32 @@ impl Token {
                     let location = match reference {
                         Ref::Local(reference) => *scope.locals.get(&reference).unwrap(),
                         Ref::Global(reference) => reference,
+                        Ref::Heap(location) => {
+
+                            let mut new_location = 0;
+
+                            let heap = scope.heap.borrow();
+                            let mut peekable = heap.iter().peekable();
+
+                            while let Some((location, _)) = peekable.next() {
+                                if let Some((next_location, _)) = peekable.peek() {
+                                    if **next_location - location >= *len {
+                                        new_location = **next_location - location;
+                                        break;
+                                    }
+                                } else {
+                                    new_location = *location;
+                                    break;
+                                }
+                            }
+
+                            for i in 1..*len { 
+                                let variable = scope.heap.borrow().get(&(location + i)).unwrap().clone();
+                                scope.heap.borrow_mut().insert(new_location + i, variable);
+                            }
+     
+                            return Ok(scope.heap.borrow().get(&location).unwrap().clone());
+                        }
                     };
 
                     for i in 1..*len {
@@ -237,21 +291,17 @@ impl Token {
                         scope.stack.borrow_mut().push(variable);
                     }
 
-                    return Ok(scope.stack.borrow()[location].clone())
+                    return Ok(scope.stack.borrow()[location].clone());
                 } else {
-                    return Err(Error::DereferenceingNonReference)
+                    return Err(Error::DereferenceingNonReference);
                 }
             }
             Token::FunctionCall(function, parameters) => {
-                let mut params = Vec::new();
-
-                for p in parameters {
-                    params.push(p.resolve(scope)?);
-                }
-
                 if let Variable::FunctionRef(function_ref) = function.resolve(scope)? {
                     if let Some(function) = scope.functions.borrow().get(&function_ref) {
-                        let (return_value, len) = function.run(scope, params)?;
+                        let (return_value, len) = 
+                            function.clone().run(scope.child(&Vec::new()), parameters.clone())?;
+
                         scope.stack_len += len;
 
                         return Ok(return_value);
@@ -259,21 +309,26 @@ impl Token {
                         return Err(Error::InvalidFunctionCall("Function not declared"));
                     }
                 } else {
-                    return Err(Error::InvalidFunctionCall("Trying to call non-funtion"));
+                    return Err(Error::InvalidFunctionCall("Trying to call non-function"));
                 }
             },
             Token::AccessField(object, field) => {
                 if let Token::Deref(reference, _) = &**object {
                     if let Variable::Ref(reference) = reference.resolve(scope)? {
+                        let mut heap = scope.heap.borrow_mut();
                         let mut stack = scope.stack.borrow_mut();
 
                         let (object, location) = match reference {
                             Ref::Local(reference) => {
-                                (&mut stack[*scope.locals.get(&reference).unwrap()], *scope.locals.get(&reference).unwrap())
+                                (&mut stack[*scope.locals.get(&reference).unwrap()], 
+                                 *scope.locals.get(&reference).unwrap())
                             },
                             Ref::Global(reference) => {
                                 (&mut stack[reference], reference)
-                            }
+                            },
+                            Ref::Heap(reference) => {
+                                (heap.get_mut(&reference).unwrap(), reference)
+                            },
                         };
 
                         if let Variable::Struct(object) = object {
@@ -294,14 +349,43 @@ impl Token {
                     return Err(Error::IndexError("Cannot access field on non-references"));
                 }
             },
-            Token::Index(array, index) => {
-                if let Variable::Array(array) = array.resolve(scope)? {
-                    if let Variable::Int(index) = index.resolve(scope)? {
-                        return Ok(array[index as usize].clone());
-                    } else {
-                        return Err(Error::IndexError("Arrays are only indexed by integers"));
-                    }
+            Token::Index(array, index, element_len) => {
+                let array = if let Token::Deref(reference, _) = &**array {
+                    reference.resolve(scope)?
                 } else {
+                    array.resolve(scope)?
+                };
+
+
+                if let Variable::Ref(reference) = array {
+                    let index = index.resolve(scope)?;
+
+                    let mut heap = scope.heap.borrow_mut();
+                    let mut stack = scope.stack.borrow_mut();
+
+                    let (array, location) = match reference {
+                        Ref::Local(reference) => {
+                            (&mut stack[*scope.locals.get(&reference).unwrap()], 
+                             *scope.locals.get(&reference).unwrap())
+                        },
+                        Ref::Global(reference) => {
+                            (&mut stack[reference], reference)
+                        },
+                        Ref::Heap(reference) => {
+                            (heap.get_mut(&reference).unwrap(), reference)
+                        },
+                    };
+
+                    if let Variable::Array(_) = array {
+                        if let Variable::Int(index) = index {
+                            return Ok(Variable::Ref(Ref::Global(location + 1 + index as usize * *element_len)));
+                        } else {
+                            return Err(Error::IndexError("Arrays are only indexed by integers"));
+                        }
+                    } else {
+                        return Err(Error::IndexError("Tried to index into a non-array"));
+                    }
+                } else { 
                     return Err(Error::IndexError("Tried to index into a non-array"));
                 }
             },
@@ -323,6 +407,17 @@ impl Token {
                 }
 
                 return Ok(Variable::Struct(map));
+            },
+            Token::InitArray(elements) => {
+                for i in elements {
+                    scope.stack_len += 1;
+
+                    let index = scope.stack.borrow().len();
+                    scope.stack.borrow_mut().push(Variable::Null);
+                    scope.stack.borrow_mut()[index] = i.resolve(scope)?;
+                }
+
+                return Ok(Variable::Array(elements.len()));
             },
             Token::Add(lhs, rhs) => {
                 return Ok(lhs.resolve(scope)?.add(rhs.resolve(scope)?)?);
@@ -358,6 +453,7 @@ pub struct Scope<'s> {
     pub stack_offset: usize,
     pub stack_len: usize,
     pub locals: Locals,
+    pub heap: Rc<RefCell<HashMap<usize, Variable>>>,
     pub stack: Rc<RefCell<Variables>>,
     pub functions: Rc<RefCell<Functions>>,
     pub instructions: &'s Vec<Instruction>,
@@ -366,6 +462,7 @@ pub struct Scope<'s> {
 
 impl<'s> Scope<'s> {
     pub fn new(
+        heap: Rc<RefCell<HashMap<usize, Variable>>>,
         stack: Rc<RefCell<Variables>>,
         functions: Rc<RefCell<Functions>>, 
         instructions: &'s Vec<Instruction>
@@ -374,6 +471,7 @@ impl<'s> Scope<'s> {
             stack_offset: 0,
             stack_len: 0,
             locals: Locals::new(),
+            heap,
             stack,
             functions, 
             instructions,
@@ -387,6 +485,7 @@ impl<'s> Scope<'s> {
             stack_offset: self.stack.borrow().len() - 1,
             stack_len: 0,
             locals: self.locals.clone(),
+            heap: self.heap.clone(),
             stack: self.stack.clone(),
             functions: self.functions.clone(),
             instructions,
@@ -431,7 +530,7 @@ impl<'s> Scope<'s> {
                 Instruction::InitVariable(key, token_tree) => {
                     let index = self.stack.borrow().len();
                     self.stack.borrow_mut().push(Variable::Null);
-
+                    
                     let value = token_tree.resolve(self)?;
 
                     self.stack.borrow_mut()[index] = value;
@@ -450,6 +549,7 @@ impl<'s> Scope<'s> {
                                 self.stack.borrow_mut()[*global] = value
                             },
                             Ref::Global(target) => self.stack.borrow_mut()[target] = value,
+                            Ref::Heap(target) => *self.heap.borrow_mut().get_mut(&target).unwrap() = value,
                         }
                     } else {
                         return Err(Error::NullReference);
@@ -463,8 +563,6 @@ impl<'s> Scope<'s> {
                                                           .iter()
                                                           .map(|v| v.clone())
                                                           .collect();
-
-                    //self.stack_len += 1;
 
                     self.free();
 
@@ -495,10 +593,6 @@ impl<'s> Scope<'s> {
         }
 
         self.free();
-
-        for (i, v) in self.stack.borrow().iter().enumerate() {
-            println!("STACKLEAK_{}: {:?}", i, v);
-        }
 
         Ok((Variable::Null, 0))
     }
@@ -531,6 +625,7 @@ impl Interpreter {
             scope_functions.insert(ident.clone(), Function::Rust(*function, parameters.parameters.clone()));
         }
 
+        let heap = Rc::new(RefCell::new(HashMap::new()));
         let stack = Rc::new(RefCell::new(Variables::new()));
         let instructions = crate::language::parse(&mut code.into().trim().to_string(), 
                                                  HashMap::new(), 
@@ -544,14 +639,29 @@ impl Interpreter {
         let instructions = instructions.unwrap();
 
         let mut scope = Scope::new(
+            heap.clone(),
             stack.clone(),
             Rc::new(RefCell::new(scope_functions)),
             &instructions,
         );
-        
-        match scope.run() {
+
+        for i in &instructions {
+            println!("INSTRUCTION: {:?}", i);
+        }
+
+        println!("\nOUTPUT:");
+
+        let return_value = match scope.run() {
             Ok((v, _)) => Ok(v),
             Err(e) => Err(error::Error::InterpreterError(e)) 
+        };
+
+        println!("");
+
+        for (i, v) in scope.stack.borrow().iter().enumerate() {
+            println!("STACKLEAK_{}: {:?}", i, v);
         }
+        
+        return_value
     }
 }

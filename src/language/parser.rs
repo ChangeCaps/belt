@@ -16,7 +16,8 @@ pub enum VarType {
     FunctionRef,
     Ref(Box<Var>),
     String,
-    Array(Box<Var>),
+    Slice(Box<Var>),
+    Array(Box<Var>, usize),
     Struct(String),
     Null,
     Any,
@@ -62,7 +63,7 @@ pub fn parse(
             }
 
             lexer.skip_space();
-            let token_tree = lexer.get(";");
+            let token_tree = lexer.get_extensive_skip("[", "]", ";");
             
             if !lexer.find(";") {
                 return Err(ParseError::MissingToken(";"));
@@ -120,6 +121,12 @@ pub fn parse(
         // look for pattern return#;
         if lexer.find("return") {
             if lexer.skip_space() {
+                if lexer.find(";") {
+                    instructions.push(Instruction::Return(Token::Variable(Variable::Null), 1));
+                    lexer.confirm();
+                    continue;
+                }
+
                 if let Some(token_tree) = lexer.get(";") {
                     let (token, var) = parse_token_tree(token_tree, &structs, &vars, &functions)?;
 
@@ -128,7 +135,11 @@ pub fn parse(
                     lexer.confirm();
                     continue;
                 }
-            } 
+            } else if lexer.find(";") {
+                instructions.push(Instruction::Return(Token::Variable(Variable::Null), 1));
+                lexer.confirm();
+                continue;
+            }
         }
 
         lexer.restart();
@@ -140,7 +151,7 @@ pub fn parse(
                 
             if lexer.find("=") {
                 lexer.skip_space();
-                let token_tree = lexer.get(";");
+                let token_tree = lexer.get_extensive_skip("[", "]", ";");
 
                 // insure we have a semicolon at the end of a line
                 if !lexer.find(";") {
@@ -156,7 +167,7 @@ pub fn parse(
                     }
 
                     // remove deref
-                    if let Token::Deref(token_tree, 0) = target {
+                    if let Token::Deref(token_tree, _) = target {
                         target = *token_tree;
                     }
 
@@ -298,21 +309,21 @@ pub fn parse(
                             if let Some(mut scope) = lexer.get_expansive("{", "}") {
                                 lexer.find("}");
 
-                                instructions.push(Instruction::AddFunction(
-                                    function_ident.clone(), 
-                                    interpreter::Function::Native(
-                                        parse(&mut scope, structs.clone(), vars, functions.clone())?, 
-                                        params.clone()
-                                    )
-                                ));
-
                                 functions.insert(
-                                    function_ident,
+                                    function_ident.clone(),
                                     Function {
-                                        parameters: params.into_iter().map(|(_, ty)| ty).collect(),
+                                        parameters: params.clone().into_iter().map(|(_, ty)| ty).collect(),
                                         return_value: return_type,
                                     }
                                 );
+
+                                instructions.push(Instruction::AddFunction(
+                                    function_ident, 
+                                    interpreter::Function::Native(
+                                        parse(&mut scope, structs.clone(), vars, functions.clone())?, 
+                                        params
+                                    )
+                                )); 
 
                                 lexer.confirm();
                                 continue;
@@ -375,7 +386,47 @@ pub fn parse_field(
     Err(ParseError::VariableParseFailiure(code))
 }
 
-pub fn parse_type(code: String, structs: &HashMap<String, Struct>) -> Result<Var, ParseError> {
+pub fn parse_type(mut code: String, structs: &HashMap<String, Struct>) -> Result<Var, ParseError> {
+    let mut lexer = Lexer::new(&mut code);
+
+    if lexer.find("&") {
+        lexer.confirm();
+        return Ok(Var { 
+            var_type: VarType::Ref(Box::new(parse_type(code, structs)?)),
+            len: 1
+        });
+    }
+
+    if lexer.find("[") {
+        lexer.skip_space();
+        if let Some(mut ty) = lexer.get_expansive("[", "]") {
+            let mut lexer = Lexer::new(&mut ty);
+
+            if let Some(ty) = lexer.get_extensive_skip("[", "]", ";") {
+                lexer.find(";");
+                lexer.skip_space();
+
+                let len = match lexer.get_code().1.trim().parse::<usize>() {
+                    Ok(len) => len,
+                    Err(_) => return Err(
+                        ParseError::VariableParseFailiure(lexer.get_code().1.trim().to_string())
+                    )
+                };
+
+                let var = parse_type(ty, structs)?;
+                
+                return Ok(Var { 
+                    len: len * var.len + 1,
+                    var_type: VarType::Array(Box::new(var), len),
+                });
+            } else {
+                return Ok(Var { var_type: VarType::Slice(Box::new(parse_type(ty, structs)?)), len: 1 });
+            }
+        } else {
+            return Err(ParseError::MissingToken("]"));
+        }
+    }
+
     if let Some(s) = structs.get(&code) {
         return Ok(Var { var_type: VarType::Struct(code), len: s.len });
     } else {
@@ -389,7 +440,10 @@ pub fn parse_type(code: String, structs: &HashMap<String, Struct>) -> Result<Var
     return Err(ParseError::VariableParseFailiure(code));
 }
 
-pub fn parse_type_declaration(mut code: String, structs: &HashMap<String, Struct>) -> Result<(String, Var), ParseError> {
+pub fn parse_type_declaration(
+    mut code: String, 
+    structs: &HashMap<String, Struct>
+) -> Result<(String, Var), ParseError> {
     let mut lexer = Lexer::new(&mut code);
 
     if let Some(field_ident) = lexer.get(":") {
@@ -399,17 +453,9 @@ pub fn parse_type_declaration(mut code: String, structs: &HashMap<String, Struct
         let field_ident = field_ident.trim().to_string();
         let code = code.trim().to_string();
         
-        if parse_reference(&field_ident) && parse_reference(&code) {
-            if let Some(s) = structs.get(&code) {
-                return Ok((field_ident, Var { var_type: VarType::Struct(code), len: s.len }));
-            }
+        let ty = parse_type(code, structs)?;
 
-            for (ident, ty) in &VAR_IDENTS {
-                if code.as_str() == *ident {
-                    return Ok((field_ident, ty.clone()));
-                }
-            } 
-        }
+        return Ok((field_ident, ty));
     }
 
     Err(ParseError::VariableParseFailiure(code))
@@ -465,10 +511,11 @@ pub fn parse_funtion_call(
                                 Err(
                                     ParseError::TypeMismatch(
                                         format!(
-                                            "Parameter '{}' on '{}' is supposed to be '{:?}'", 
+                                            "Parameter '{}' on '{}' is supposed to be '{:?}', not {:?}", 
                                             param_index, 
                                             function_ident, 
-                                            function.parameters[param_index].var_type
+                                            function.parameters[param_index].var_type,
+                                            var.var_type
                                         ).to_string()
                                     )
                                 )
@@ -497,10 +544,11 @@ pub fn parse_funtion_call(
                                 Err(
                                     ParseError::TypeMismatch(
                                         format!(
-                                            "Parameter '{}' on '{}' is supposed to be '{:?}'", 
+                                            "Parameter '{}' on '{}' is supposed to be '{:?}' not '{:?}'", 
                                             param_index, 
                                             function_ident, 
-                                            function.parameters[param_index].var_type
+                                            function.parameters[param_index].var_type,
+                                            var.var_type
                                         ).to_string()
                                     )
                                 )
@@ -734,7 +782,9 @@ pub fn parse_token_tree(
             lexer.skip(1);
 
             if !parse_reference(&field_ident) {
-                return Err(ParseError::VariableParseFailiure(format!("{} is ot a valid field", field_ident).to_string()));
+                return Err(ParseError::VariableParseFailiure(
+                    format!("{} is not a valid field on {}", field_ident, struct_ident).to_string()
+                ));
             }
 
             let (struct_token, struct_type) = parse_token_tree(struct_ident, structs, vars, functions)?;
@@ -754,20 +804,56 @@ pub fn parse_token_tree(
         }
     }
 
-    if let Some(array) = lexer.get("[") {
+    if lexer.find("[") {
+        if let Some(mut elements) = lexer.get_expansive("[", "]") {
+            lexer.find("]");
+
+            let mut lexer = Lexer::new(&mut elements);
+
+            if let Some(element_type) = lexer.get_extensive_skip("[", "]", ";") {
+                lexer.find(";");
+
+                let (element, element_type) = parse_token_tree(element_type.clone(), 
+                                                               structs,
+                                                               vars,
+                                                               functions)?;
+
+                let len = match lexer.get_code().1.trim().parse::<usize>() {
+                    Ok(i) => i,
+                    Err(_) => return Err(ParseError::VariableParseFailiure(lexer.get_code().1.to_string())),
+                };
+
+                let var = Var {
+                    len: len * element_type.len + 1,
+                    var_type: VarType::Array(Box::new(element_type), len),
+                };
+
+                return Ok((Token::InitArray(vec![element; len]), var));
+            }
+        }
+    }
+
+    if let Some(array) = lexer.rget("[") {
         lexer.find("[");
         if let Some(index) = lexer.get("]") {
-            lexer.find("]");            
+            lexer.find("]");
             lexer.confirm();
 
             let array = parse_token_tree(array, structs, vars, functions)?;
             let index = parse_token_tree(index, structs, vars, functions)?;
 
-            if let VarType::Array(array_type) = &array.1.var_type {
+            if let VarType::Array(array_type, _) = &array.1.var_type {
                 if VarType::Int == index.1.var_type {
-                    return Ok((Token::Index(Box::new(array.0), Box::new(index.0)), *array_type.clone()));
+                    return Ok((
+                        Token::Deref(Box::new(Token::Index(Box::new(array.0), 
+                                                           Box::new(index.0), 
+                                                           array_type.len)), 1), 
+                        *array_type.clone()
+                    ));
                 } else {
-                    return Err(ParseError::TypeMismatch(format!("Tryed to index array with '{:?}'", index.1.var_type).to_string()));
+                    return Err(ParseError::TypeMismatch(
+                        format!("Tried to index array with '{:?}'", index.1.var_type).to_string()
+                    ));
                 }
             }
         }
@@ -901,6 +987,28 @@ impl<'l> Lexer<'l> {
             return None;
         }
     }
+
+    pub fn rget(&mut self, pattern: &'static str) -> Option<String> {
+        if !self.valid.unwrap_or(true) {
+            return None;
+        }
+
+        let (_, code) = self.code.split_at(self.cursor);
+
+        let stop = code.rfind(pattern);
+
+        if let Some(stop) = stop {
+            self.cursor += stop;
+
+            return Some(code.split_at(stop).0.to_string());
+        } else {
+            self.valid.as_mut().map(|valid| *valid = false);
+
+            return None;
+        }
+    }
+
+
 
     pub fn get_any(&mut self, pattern: Vec<&'static str>) -> Option<String> {
         if !self.valid.unwrap_or(true) {

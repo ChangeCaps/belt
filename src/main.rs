@@ -18,24 +18,17 @@ fn main() {
     interpreter.add_function("print", function!(print{Any}));
     
     interpreter.run(r#"
+fn test(t: &[int; 2]) {
+    let x = *t;
 
-struct s1 {
-    test1: int
+    print(x[0]);
 }
 
-struct s2 {
-    test2: s1
-}
+let x = [1; 2];
 
-fn test() -> s1 {
-    let x = s1 { test1: 2 };
+x[0] = 2;
 
-    return x;
-}
-
-let y = test();
-
-print(y);
+test(&x);
     "#).unwrap();
 
     /*fumarole::Application::new()
