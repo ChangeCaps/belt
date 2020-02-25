@@ -52,12 +52,13 @@ macro_rules! add_variable_operator {
 
 #[macro_export]
 macro_rules! function {
-    ($f:ident{$($arg:ident),*}) => {
-        ($f, 
+    ($f:ident($($arg:expr),*) -> $rty:ident) => {
+        (
+            $f, 
             language::parser::Function { 
-                parameters: vec![$(Var { var_type: language::VarType::$arg, len: 1 }),*], 
+                parameters: vec![$(Var { var_type: $arg, len: 1 }),*], 
                 return_value: language::Var { 
-                    var_type: language::VarType::Null, 
+                    var_type: language::VarType::$rty, 
                     len: 1 
                 } 
             }
@@ -69,10 +70,17 @@ type Locals = std::collections::HashMap<String, usize>;
 type Variables = Vec<Variable>;
 type Functions = std::collections::HashMap<String, Function>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Function {
-    Rust(fn(Vec<Variable>) -> Variable, Vec<Var>),
+    Rust(fn(&mut Scope, Vec<Variable>) -> Variable, Vec<Var>),
     Native(Vec<Instruction>, Vec<(String, Var)>),
+}
+
+impl std::fmt::Debug for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        
+        Ok(())
+    }
 }
 
 impl Function {
@@ -95,7 +103,11 @@ impl Function {
                     params.push(s.resolve(&mut scope)?);
                 }
 
-                Ok((function(params), 0))
+                let output = function(&mut scope, params.clone());
+
+                scope.free();
+
+                Ok((output, 0))
             },
             Function::Native(instructions, parameters) => {
                 if stack.len() > parameters.len() {
@@ -236,6 +248,7 @@ pub enum Token {
     Index(Box<Token>, Box<Token>, usize),
     InitStruct(Vec<(String, Token)>),
     InitArray(Vec<Token>),
+    InitSlice(Box<Token>, Box<Token>, usize),
     Add(Box<Token>, Box<Token>),
     Sub(Box<Token>, Box<Token>),
     Mul(Box<Token>, Box<Token>),
@@ -257,7 +270,33 @@ impl Token {
                         Ref::Local(reference) => *scope.locals.get(&reference).unwrap(),
                         Ref::Global(reference) => reference,
                         Ref::Heap(location) => {
-
+                            if let Variable::Slice(location, len, element_len) = scope.stack.borrow()[location] {
+                                let mut new_location = 0;
+     
+                                let mut heap = scope.heap.borrow_mut();
+                                let mut peekable = heap.iter().peekable();
+     
+                                while let Some((location, _)) = peekable.next() {
+                                    if let Some((next_location, _)) = peekable.peek() {
+                                        if **next_location - location >= len {
+                                            new_location = location + 1;
+                                            break;
+                                        }
+                                    } else {
+                                        new_location = *location + 1;
+                                        break;
+                                    }
+                                }
+                                 
+     
+                                for i in 0..len * element_len {
+                                    let variable = heap.get(&(location + i)).unwrap().clone();
+                                    heap.insert(new_location + i, variable);
+                                }
+     
+                                return Ok(Variable::Slice(new_location, len, element_len));
+                            }
+                             
                             let mut new_location = 0;
 
                             let heap = scope.heap.borrow();
@@ -266,7 +305,7 @@ impl Token {
                             while let Some((location, _)) = peekable.next() {
                                 if let Some((next_location, _)) = peekable.peek() {
                                     if **next_location - location >= *len {
-                                        new_location = **next_location - location;
+                                        new_location = location + 1;
                                         break;
                                     }
                                 } else {
@@ -283,6 +322,33 @@ impl Token {
                             return Ok(scope.heap.borrow().get(&location).unwrap().clone());
                         }
                     };
+
+                    if let Variable::Slice(location, len, element_len) = scope.stack.borrow()[location] {
+                        let mut new_location = 0;
+
+                        let mut heap = scope.heap.borrow_mut();
+                        let mut peekable = heap.iter().peekable();
+
+                        while let Some((location, _)) = peekable.next() {
+                            if let Some((next_location, _)) = peekable.peek() {
+                                if **next_location - location >= len {
+                                    new_location = location + 1;
+                                    break;
+                                }
+                            } else {
+                                new_location = *location + 1;
+                                break;
+                            }
+                        }
+                            
+
+                        for i in 0..len * element_len {
+                            let variable = heap.get(&(location + i)).unwrap().clone();
+                            heap.insert(new_location + i, variable);
+                        }
+
+                        return Ok(Variable::Slice(new_location, len, element_len));
+                    }
 
                     for i in 1..*len {
                         scope.stack_len += 1;
@@ -382,6 +448,12 @@ impl Token {
                         } else {
                             return Err(Error::IndexError("Arrays are only indexed by integers"));
                         }
+                    } else if let Variable::Slice(location, _, _) = array {
+                        if let Variable::Int(index) = index {
+                            return Ok(Variable::Ref(Ref::Heap(*location + index as usize * *element_len)));
+                        } else {
+                            return Err(Error::IndexError("Slices are only indexed by integers"));
+                        }
                     } else {
                         return Err(Error::IndexError("Tried to index into a non-array"));
                     }
@@ -419,6 +491,44 @@ impl Token {
 
                 return Ok(Variable::Array(elements.len()));
             },
+            Token::InitSlice(element, len, element_len) => {
+                if let Variable::Int(len) = len.resolve(scope)? {
+                    let mut new_location = 0;
+
+                    let heap = scope.heap.borrow();
+                    let mut peekable = heap.iter().peekable();
+
+                    while let Some((location, _)) = peekable.next() {
+                        if let Some((next_location, _)) = peekable.peek() {
+                            if **next_location - location >= len as usize * *element_len {
+                                new_location = **next_location - location;
+                                break;
+                            }
+                        } else {
+                            new_location = *location;
+                            break;
+                        }
+                    }
+
+                    drop(heap);
+                    
+                    let index = scope.stack.borrow().len();
+                    let variable = element.resolve(scope)?;
+
+                    for i in 0..len as usize {  
+                        scope.heap.borrow_mut().insert(new_location + i * element_len, variable.clone());
+
+                        for j in 1..*element_len {
+                            let variable = scope.stack.borrow()[index + j].clone();
+                            scope.heap.borrow_mut().insert(new_location + i * element_len + j, variable);
+                        }
+                    }
+
+                    return Ok(Variable::Slice(new_location, len as usize, *element_len));
+                } else {
+                    return Err(Error::NullReference);
+                }
+            },
             Token::Add(lhs, rhs) => {
                 return Ok(lhs.resolve(scope)?.add(rhs.resolve(scope)?)?);
             },
@@ -432,10 +542,26 @@ impl Token {
                 return Ok(lhs.resolve(scope)?.div(rhs.resolve(scope)?)?);
             },
             Token::Eq(lhs, rhs) => {
-                return Ok(Variable::Bool(lhs.resolve(scope)? == rhs.resolve(scope)?));
+                let lhs = lhs.resolve(scope)?;
+                let rhs = rhs.resolve(scope)?;
+
+                let output = Variable::Bool(lhs == rhs);
+
+                lhs.free(scope);
+                rhs.free(scope);
+
+                return Ok(output);
             },
             Token::Neq(lhs, rhs) => {
-                return Ok(Variable::Bool(lhs.resolve(scope)? != rhs.resolve(scope)?));
+                let lhs = lhs.resolve(scope)?;
+                let rhs = rhs.resolve(scope)?;
+
+                let output = Variable::Bool(lhs != rhs);
+
+                lhs.free(scope);
+                rhs.free(scope);
+
+                return Ok(output);            
             },
             Token::Not(exp) => {
                 if let Variable::Bool(exp) = exp.resolve(scope)? {
@@ -520,7 +646,8 @@ impl<'s> Scope<'s> {
 
     pub fn free(&mut self) {
         for _ in 0..self.stack_len {
-            self.stack.borrow_mut().pop().unwrap();
+            let x = self.stack.borrow_mut().pop().unwrap();
+            x.free(self);
         }
     }
 
@@ -599,19 +726,43 @@ impl<'s> Scope<'s> {
 }
 
 pub struct Interpreter {
-    pub functions: HashMap<String, (fn(Vec<Variable>) -> Variable, parser::Function)>, 
+    pub functions: HashMap<String, (fn(&mut Scope, Vec<Variable>) -> Variable, parser::Function)>, 
 }
 
 impl Interpreter {
-    pub fn add_function<S: Into<String>>(&mut self, ident: S, function: (fn(Vec<Variable>) -> Variable, parser::Function)) {
+    pub fn add_function<S: Into<String>>(
+        &mut self, 
+        ident: S, 
+        function: (fn(&mut Scope, Vec<Variable>) -> Variable, parser::Function)
+    ) {
         self.functions.insert(ident.into(), function);
     }
 
     pub fn new() -> Self
     {      
-        Interpreter {
+        let mut interpreter = Interpreter {
             functions: HashMap::new(),
+        };
+
+        fn print(_: &mut language::Scope, variables: Vec<language::Variable>) -> language::Variable {
+            println!("{:?}", variables[0]);
+
+            language::Variable::Null
         }
+
+        fn len(_: &mut Scope, variables: Vec<Variable>) -> Variable {
+            if let Variable::Slice(_, len, _) = variables[0] {
+                Variable::Int(len as i32)
+            } else {
+                Variable::Int(1)
+            }
+        }
+
+        use crate::language;
+        interpreter.add_function("print", function!(print(language::VarType::Any) -> Null));
+        interpreter.add_function("len", function!(len(VarType::Any) -> Int));
+
+        interpreter
     }
     
     pub fn run<S>(&mut self, code: S) -> Result<Variable, error::Error> 
@@ -660,6 +811,10 @@ impl Interpreter {
 
         for (i, v) in scope.stack.borrow().iter().enumerate() {
             println!("STACKLEAK_{}: {:?}", i, v);
+        }
+        
+        for (i, v) in scope.heap.borrow().iter().enumerate() {
+            println!("HEAPLEAK_{}: {:?}", i, v);
         }
         
         return_value

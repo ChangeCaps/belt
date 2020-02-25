@@ -345,7 +345,7 @@ pub fn parse(
         let mut lexer = Lexer::new(code);
 
         // tries to look for naked function calls
-        if let Some(token) = lexer.get(";") {
+        if let Some(token) = lexer.get_extensive_skip("[", "]", ";") {
             lexer.find(";");
 
             if let Some(funcion_call) = parse_funtion_call(&mut token.clone(), &structs, &vars, &functions) {
@@ -388,6 +388,20 @@ pub fn parse_field(
 
 pub fn parse_type(mut code: String, structs: &HashMap<String, Struct>) -> Result<Var, ParseError> {
     let mut lexer = Lexer::new(&mut code);
+
+    if lexer.find("&[") {
+        if let Some(ty) = lexer.get_expansive("[", "]") {
+            let var = parse_type(ty, structs)?;
+
+            lexer.confirm();
+            return Ok(Var {
+                len: 1,
+                var_type: VarType::Slice(Box::new(var)),
+            });
+        } else {
+            return Err(ParseError::MissingToken("]"));
+        }
+    }
 
     if lexer.find("&") {
         lexer.confirm();
@@ -746,31 +760,7 @@ pub fn parse_token_tree(
         }
     }
 
-    // ref & deref
-    if lexer.find("*") {
-        lexer.confirm();
-
-        let exp = parse_token_tree(string, structs, vars, functions)?;
-
-        if let VarType::Ref(reference) = exp.1.var_type {
-            return Ok((Token::Deref(Box::new(exp.0), reference.len), *reference));
-        } else {
-            return Err(ParseError::TypeMismatch(format!("Tried to dereference {:?}", exp.1.var_type).to_string()));
-        }
-    }
-    if lexer.find("&") {
-        lexer.confirm();
-
-        let (token, var) = parse_token_tree(string, structs, vars, functions)?;
-        
-        if let Token::Deref(token, _) = token {
-            return Ok((*token, Var { var_type: VarType::Ref(Box::new(var.clone())), len: 1 }));
-        } else {
-            return Err(ParseError::InvalidOperator(format!("'*' on {:?}", var.var_type).to_string()));
-        }
-    }
-
-    if let Some(struct_ident) = lexer.get(".") {
+    if let Some(struct_ident) = lexer.rget(".") {
         lexer.find(".");
 
         let ident = lexer.get_code().1.to_string();
@@ -803,6 +793,64 @@ pub fn parse_token_tree(
             }
         }
     }
+
+    if lexer.find("&[") {
+        if let Some(mut elements) = lexer.get_expansive("[", "]") {
+            lexer.find("]");
+
+            let mut lexer = Lexer::new(&mut elements);
+
+            if let Some(element_type) = lexer.get_extensive_skip("[", "]", ";") {
+                lexer.find(";");
+
+                let (element, element_type) = parse_token_tree(element_type.clone(), 
+                                                               structs,
+                                                               vars,
+                                                               functions)?;
+
+                let len = parse_token_tree(lexer.get_code().1.to_string(),
+                                           structs,
+                                           vars,
+                                           functions)?;
+
+                let var = Var {
+                    len: 1,
+                    var_type: VarType::Slice(Box::new(element_type.clone())),
+                };
+
+                if len.1.var_type == VarType::Int {
+                    lexer.confirm();
+                    return Ok((Token::InitSlice(Box::new(element), Box::new(len.0), element_type.len), var));
+                } else {
+                    return Err(ParseError::VariableParseFailiure(lexer.get_code().1.to_string()));
+                }
+            }
+        }
+    }
+
+    // ref & deref
+    if lexer.find("*") {
+        lexer.confirm();
+
+        let exp = parse_token_tree(string, structs, vars, functions)?;
+
+        if let VarType::Ref(reference) = exp.1.var_type {
+            return Ok((Token::Deref(Box::new(exp.0), reference.len), *reference));
+        } else {
+            return Err(ParseError::TypeMismatch(format!("Tried to dereference {:?}", exp.1.var_type).to_string()));
+        }
+    }
+    if lexer.find("&") {
+        lexer.confirm();
+
+        let (token, var) = parse_token_tree(string, structs, vars, functions)?;
+        
+        if let Token::Deref(token, _) = token {
+            return Ok((*token, Var { var_type: VarType::Ref(Box::new(var.clone())), len: 1 }));
+        } else {
+            return Err(ParseError::InvalidOperator(format!("'*' on {:?}", var.var_type).to_string()));
+        }
+    } 
 
     if lexer.find("[") {
         if let Some(mut elements) = lexer.get_expansive("[", "]") {
@@ -842,7 +890,7 @@ pub fn parse_token_tree(
             let array = parse_token_tree(array, structs, vars, functions)?;
             let index = parse_token_tree(index, structs, vars, functions)?;
 
-            if let VarType::Array(array_type, _) = &array.1.var_type {
+            if let VarType::Array(array_type, _) | VarType::Slice(array_type) = &array.1.var_type {
                 if VarType::Int == index.1.var_type {
                     return Ok((
                         Token::Deref(Box::new(Token::Index(Box::new(array.0), 

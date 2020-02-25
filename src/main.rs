@@ -4,7 +4,7 @@ pub mod states;
 pub mod isometric;
 pub mod language;
 
-fn print(variables: Vec<language::Variable>) -> language::Variable {
+fn print(_: &mut language::Scope, variables: Vec<language::Variable>) -> language::Variable {
     println!("{:?}", variables[0]);
 
     language::Variable::Null
@@ -15,20 +15,24 @@ fn main() {
 
     let mut interpreter = Interpreter::new();
 
-    interpreter.add_function("print", function!(print{Any}));
+    interpreter.add_function("print", function!(print(language::VarType::Any) -> Null));
     
     interpreter.run(r#"
-fn test(t: &[int; 2]) {
-    let x = *t;
-
-    print(x[0]);
+struct test {
+    test: int,
+    test2: int,
 }
 
-let x = [1; 2];
+let t = test {
+    test: 0,
+    test2: 3
+};
 
-x[0] = 2;
+let x = [t; 5];
 
-test(&x);
+let y = x;
+
+print(x);
     "#).unwrap();
 
     /*fumarole::Application::new()
@@ -37,5 +41,4 @@ test(&x);
 
             })
         });*/
-
 }
