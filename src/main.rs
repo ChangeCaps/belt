@@ -23,6 +23,11 @@ fn main() {
             loader.load_image_from_raw(include_bytes!("../assets/claw_open.png"), PNG, "claw_open");
             loader.load_image_from_raw(include_bytes!("../assets/claw_back_closed.png"), PNG, "claw_back_closed");
             loader.load_image_from_raw(include_bytes!("../assets/claw_back_open.png"), PNG, "claw_back_open");
+
+            loader.load_image_from_raw(include_bytes!("../assets/hole_back_blue.png"), PNG, "hole_back_blue");
+            loader.load_image_from_raw(include_bytes!("../assets/hole_front_blue.png"), PNG, "hole_front_blue");
+
+            loader.load_image_from_raw(include_bytes!("../assets/crate_0.png"), PNG, "crate_0");
             loader.load_image_from_raw(include_bytes!("../assets/belt.png"), PNG, "belt");
 
             Box::new(states::Game::new(code.clone()))

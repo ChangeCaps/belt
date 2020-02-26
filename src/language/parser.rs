@@ -700,6 +700,8 @@ pub fn parse_token_tree(
     }
     if let Some(token) = lexer.get("-") {
         lexer.find("-");
+
+        println!("token: {}", token);
         
         let lhs = parse_token_tree(token, structs, vars, functions);
         
@@ -773,10 +775,9 @@ pub fn parse_token_tree(
         lexer.find(".");
 
         let ident = lexer.get_code().1.to_string();
-        let field_ident = lexer.get_any(vec![" ", ".", ",", "(", ")", "[", "]", "*", "/", "+", "-", "&"]);
 
-        if field_ident.is_some() || parse_reference(&ident) {
-            let field_ident = field_ident.unwrap_or(ident);
+        if parse_reference(&ident) {
+            let field_ident = ident;
 
             lexer.skip(1);
 

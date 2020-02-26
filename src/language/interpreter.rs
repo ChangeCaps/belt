@@ -52,13 +52,13 @@ macro_rules! add_variable_operator {
 
 #[macro_export]
 macro_rules! function {
-    ($f:ident($($arg:expr),*) -> $rty:ident) => {
+    ($f:ident($($arg:expr),*) -> $rty:expr) => {
         (
             $f, 
             language::parser::Function { 
                 parameters: vec![$(Var { var_type: $arg, len: 1 }),*], 
                 return_value: language::Var { 
-                    var_type: language::VarType::$rty, 
+                    var_type: $rty, 
                     len: 1 
                 } 
             }
@@ -78,6 +78,9 @@ pub enum Function {
 
 impl std::fmt::Debug for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        if let Function::Native(instructions, _) = self {
+            let _ = f.write_str(format!("{:?}", instructions).as_str());
+        }
         
         Ok(())
     }
@@ -270,7 +273,9 @@ impl Token {
                         Ref::Local(reference) => *scope.locals.get(&reference).unwrap(),
                         Ref::Global(reference) => reference,
                         Ref::Heap(location) => {
-                            if let Variable::Slice(location, len, element_len) = scope.stack.borrow()[location] {
+                            if let Variable::Slice(location, len, element_len) = 
+                                scope.heap.borrow().get(&location).unwrap() 
+                            {
                                 let mut new_location = 0;
      
                                 let mut heap = scope.heap.borrow_mut();
@@ -278,7 +283,7 @@ impl Token {
      
                                 while let Some((location, _)) = peekable.next() {
                                     if let Some((next_location, _)) = peekable.peek() {
-                                        if **next_location - location >= len {
+                                        if **next_location - location >= *len {
                                             new_location = location + 1;
                                             break;
                                         }
@@ -294,7 +299,7 @@ impl Token {
                                     heap.insert(new_location + i, variable);
                                 }
      
-                                return Ok(Variable::Slice(new_location, len, element_len));
+                                return Ok(Variable::Slice(new_location, *len, *element_len));
                             }
                              
                             let mut new_location = 0;
@@ -393,7 +398,19 @@ impl Token {
                                 (&mut stack[reference], reference)
                             },
                             Ref::Heap(reference) => {
-                                (heap.get_mut(&reference).unwrap(), reference)
+                                let object = heap.get_mut(&reference).unwrap();
+
+                                if let Variable::Struct(object) = object {
+                                    if let Some(field) = object.get(field) {
+                                        let field = field.clone();
+     
+                                        return Ok(Variable::Ref(Ref::Heap(reference + field)));
+                                    } else {
+                                        return Err(Error::IndexError("Trying to access non-field"));
+                                    }
+                                } else {
+                                    return Err(Error::IndexError("Trying to access field on non-struct"));
+                                }
                             },
                         };
 
@@ -707,7 +724,11 @@ impl<'s> Scope<'s> {
                         if check {
                             let mut child_scope = self.child(&instructions);
 
-                            child_scope.run()?;
+                            let return_value = child_scope.run()?;
+
+                            if return_value != (Variable::Null, 1) {
+                                return Ok(return_value);
+                            }
                         }
                     } else {
                         return Err(Error::InvalidIf("token tree in if statement resolved to a non-bool"));
@@ -730,6 +751,7 @@ impl<'s> Scope<'s> {
 
 pub struct Interpreter {
     pub functions: HashMap<String, (fn(&mut Scope, Vec<Variable>) -> Variable, parser::Function)>, 
+    pub structs: HashMap<String, Struct>,
     pub instructions: Vec<Instruction>
 }
 
@@ -742,10 +764,20 @@ impl Interpreter {
         self.functions.insert(ident.into(), function);
     }
 
+    pub fn add_struct<S: Into<String>>(
+        &mut self, 
+        ident: S, 
+        _struct: Struct
+    ) {
+        self.structs.insert(ident.into(), _struct);
+    }
+
+
     pub fn new() -> Self
     {      
         let mut interpreter = Interpreter {
             functions: HashMap::new(),
+            structs: HashMap::new(),
             instructions: Vec::new(),
         };
 
@@ -764,13 +796,17 @@ impl Interpreter {
         }
 
         use crate::language;
-        interpreter.add_function("print", function!(print(language::VarType::Any) -> Null));
-        interpreter.add_function("len", function!(len(VarType::Any) -> Int));
+        interpreter.add_function("print", function!(print(VarType::Any) -> VarType::Null));
+        interpreter.add_function("len", function!(len(VarType::Any) -> VarType::Int));
 
         interpreter
     }
     
-    pub fn run<S>(&mut self, code: S, script_data: std::sync::Arc<std::sync::Mutex<crate::states::ScriptData>>) -> Result<Variable, error::Error> 
+    pub fn run<S>(
+        &mut self, 
+        code: S, 
+        script_data: std::sync::Arc<std::sync::Mutex<crate::states::ScriptData>>
+    ) -> Result<Variable, error::Error> 
         where S: Into<String>
     {
         let mut functions = HashMap::new();
@@ -784,9 +820,9 @@ impl Interpreter {
         let heap = Rc::new(RefCell::new(HashMap::new()));
         let stack = Rc::new(RefCell::new(Variables::new()));
         let instructions = crate::language::parse(&mut code.into().trim().to_string(), 
-                                                 HashMap::new(), 
-                                                 HashMap::new(), 
-                                                 functions);
+                                                  self.structs.clone(), 
+                                                  HashMap::new(), 
+                                                  functions);
 
         if let Err(error) = instructions {
             return Err(error::Error::ParseError(error))
