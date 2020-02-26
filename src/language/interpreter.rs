@@ -574,7 +574,6 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
 pub struct Scope<'s> {
     pub stack_offset: usize,
     pub stack_len: usize,
@@ -584,6 +583,7 @@ pub struct Scope<'s> {
     pub functions: Rc<RefCell<Functions>>,
     pub instructions: &'s Vec<Instruction>,
     pub propagate_return_value: bool,
+    pub script_data: std::sync::Arc<std::sync::Mutex<crate::states::ScriptData>>,
 }
 
 impl<'s> Scope<'s> {
@@ -591,7 +591,8 @@ impl<'s> Scope<'s> {
         heap: Rc<RefCell<HashMap<usize, Variable>>>,
         stack: Rc<RefCell<Variables>>,
         functions: Rc<RefCell<Functions>>, 
-        instructions: &'s Vec<Instruction>
+        instructions: &'s Vec<Instruction>,
+        script_data: std::sync::Arc<std::sync::Mutex<crate::states::ScriptData>>,
     ) -> Self {
         Self {
             stack_offset: 0,
@@ -602,6 +603,7 @@ impl<'s> Scope<'s> {
             functions, 
             instructions,
             propagate_return_value: false,
+            script_data
         }
     }
 
@@ -616,6 +618,7 @@ impl<'s> Scope<'s> {
             functions: self.functions.clone(),
             instructions,
             propagate_return_value: false,
+            script_data: self.script_data.clone()
         }
     }
 
@@ -727,6 +730,7 @@ impl<'s> Scope<'s> {
 
 pub struct Interpreter {
     pub functions: HashMap<String, (fn(&mut Scope, Vec<Variable>) -> Variable, parser::Function)>, 
+    pub instructions: Vec<Instruction>
 }
 
 impl Interpreter {
@@ -742,6 +746,7 @@ impl Interpreter {
     {      
         let mut interpreter = Interpreter {
             functions: HashMap::new(),
+            instructions: Vec::new(),
         };
 
         fn print(_: &mut language::Scope, variables: Vec<language::Variable>) -> language::Variable {
@@ -765,7 +770,7 @@ impl Interpreter {
         interpreter
     }
     
-    pub fn run<S>(&mut self, code: S) -> Result<Variable, error::Error> 
+    pub fn run<S>(&mut self, code: S, script_data: std::sync::Arc<std::sync::Mutex<crate::states::ScriptData>>) -> Result<Variable, error::Error> 
         where S: Into<String>
     {
         let mut functions = HashMap::new();
@@ -794,6 +799,7 @@ impl Interpreter {
             stack.clone(),
             Rc::new(RefCell::new(scope_functions)),
             &instructions,
+            script_data,
         );
 
         for i in &instructions {

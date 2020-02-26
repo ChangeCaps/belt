@@ -1,0 +1,21 @@
+struct vec {
+    x: float,
+    y: float,
+}
+
+fn go(v: vec) {
+    let x = v.x;
+    let y = v.y;
+
+    goto(x, y);
+    v.y = v.y / -1.0;
+    v.x = v.x + 0.3;
+    go(v);
+}
+
+let v = vec {
+    x: -3.0,
+    y: 1.0,
+};
+
+go(v);

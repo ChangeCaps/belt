@@ -477,9 +477,12 @@ pub fn parse_type_declaration(
 
 // checks whether the given token is a valid variable name
 pub fn parse_reference(string: &String) -> bool {
+    const MUST_CONTAIN: &'static str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const VALID_CHARACTERS: &'static str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_";
 
-    string.find(|c: char| !VALID_CHARACTERS.contains(c)).is_none() && string.len() > 0
+    let contains = string.find(|c: char| MUST_CONTAIN.contains(c)).is_some();
+
+    string.find(|c: char| !VALID_CHARACTERS.contains(c)).is_none() && string.len() > 0 && contains
 }
 
 
@@ -697,26 +700,32 @@ pub fn parse_token_tree(
     }
     if let Some(token) = lexer.get("-") {
         lexer.find("-");
-        lexer.confirm();
+        
+        let lhs = parse_token_tree(token, structs, vars, functions);
+        
+        if lhs.is_ok() {
+            lexer.confirm();
 
-        let lhs = parse_token_tree(token, structs, vars, functions)?;
-        let rhs = parse_token_tree(string, structs, vars, functions)?;
+            let lhs = lhs.unwrap();
+            let rhs = parse_token_tree(string, structs, vars, functions)?;
 
-        if (lhs.1.var_type == VarType::Int && rhs.1.var_type == VarType::Int) || 
-           (lhs.1.var_type == VarType::Float && rhs.1.var_type == VarType::Float) {
-            return Ok((Token::Sub(Box::new(lhs.0), Box::new(rhs.0)), lhs.1));
-        } else {
-            return Err(ParseError::TypeMismatch(format!("Tried to subtract '{:?}' and '{:?}'", lhs.1.var_type, rhs.1.var_type).to_string()));
+            if (lhs.1.var_type == VarType::Int && rhs.1.var_type == VarType::Int) || 
+            (lhs.1.var_type == VarType::Float && rhs.1.var_type == VarType::Float) {
+                return Ok((Token::Sub(Box::new(lhs.0), Box::new(rhs.0)), lhs.1));
+            } else {
+                return Err(ParseError::TypeMismatch(format!("Tried to subtract '{:?}' and '{:?}'", lhs.1.var_type, rhs.1.var_type).to_string()));
+            }
         }
     }
+    lexer.restart();
     while let Some(_) = lexer.get("*") {
         let lhs = parse_token_tree(lexer.get_code().0.to_string(), structs, vars, functions);
-
+        
         lexer.find("*");
-
+        
         let rhs = parse_token_tree(lexer.get_code().1.to_string(), structs, vars, functions);
-
-        if lhs.is_ok() && lhs.is_ok() {
+        
+        if lhs.is_ok() && rhs.is_ok() {
             let lhs = lhs.unwrap();
             let rhs = rhs.unwrap();
 
@@ -784,7 +793,7 @@ pub fn parse_token_tree(
                     return Ok(
                         (
                             Token::Deref(Box::new(Token::AccessField(Box::new(struct_token), field_ident)), var.len),
-                            struct_type
+                            var.clone()
                         )
                     );
                 }
