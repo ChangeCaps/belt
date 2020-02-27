@@ -1,5 +1,9 @@
-goto(-4, 0);
-let crates = crates();
-grab(crates[1].id);
-goto(-2, -2);
-drop();
+fn take(x: int, id: int) {
+	let crates = crates();
+	grab(crates[id].id);
+	drop(x, 0);
+	take(x - 1, id + 1);
+}
+
+goto(3, 0);
+take(6, 0);

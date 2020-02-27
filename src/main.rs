@@ -14,7 +14,7 @@ fn main() {
 
     fumarole::Application::new()
         .with_window_size(1065, 600)
-        .with_pixel_window_size(355, 200)
+        .with_frame_size(355.0, 200.0)
         .with_depth_sorting(true)
         .run(|loader| {
             use states::*;
@@ -26,6 +26,8 @@ fn main() {
 
             loader.load_image_from_raw(include_bytes!("../assets/hole_back_blue.png"), PNG, "hole_back_blue");
             loader.load_image_from_raw(include_bytes!("../assets/hole_front_blue.png"), PNG, "hole_front_blue");
+
+            loader.load_image_from_raw(include_bytes!("../assets/floor.png"), PNG, "floor");
 
             loader.load_image_from_raw(include_bytes!("../assets/crate_0.png"), PNG, "crate_0");
             loader.load_image_from_raw(include_bytes!("../assets/belt.png"), PNG, "belt");
