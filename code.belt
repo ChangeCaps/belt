@@ -1,9 +1,15 @@
-fn take(x: int, id: int) {
+while true {
+	let index = 0;
 	let crates = crates();
-	grab(crates[id].id);
-	drop(x, 0);
-	take(x - 1, id + 1);
-}
 
-goto(3, 0);
-take(6, 0);
+	while index != len(crates) {
+		if crates[index].type == "crate_1" {
+			let id = crates[index].id;
+			print(id);
+			grab(id);
+			drop(1, 1);
+		}
+
+		index = index + 1;
+	}
+}

@@ -6,6 +6,7 @@ use std::io::Read;
 pub mod states;
 pub mod isometric;
 pub mod language;
+pub mod random;
 
 fn main() {
     let mut code = String::new();
@@ -30,6 +31,8 @@ fn main() {
             loader.load_image_from_raw(include_bytes!("../assets/floor.png"), PNG, "floor");
 
             loader.load_image_from_raw(include_bytes!("../assets/crate_0.png"), PNG, "crate_0");
+            loader.load_image_from_raw(include_bytes!("../assets/crate_1.png"), PNG, "crate_1");
+
             loader.load_image_from_raw(include_bytes!("../assets/belt.png"), PNG, "belt");
 
             Box::new(states::Game::new(code.clone()))

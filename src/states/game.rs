@@ -1,5 +1,6 @@
 use fumarole::*;
 use crate::isometric::*;
+use crate::random::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::collections::HashMap;
@@ -27,13 +28,19 @@ mod functions {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        return Variable::Null;
+        return Variable::Null
     }
 
     pub fn grab(scope: &mut Scope, variables: Vec<Variable>) -> Variable { 
+        if scope.script_data.lock().unwrap().claw.grabbed.is_some() {
+            scope.script_data.lock().unwrap().instruction = super::Instruction::None;
+
+            return Variable::Bool(false);
+        }
+
         let id = match variables[0] {
             Variable::Int(id) => id,
-            _ => return Variable::Null,
+            _ => return Variable::Bool(false),
         };
 
         scope.script_data.lock().unwrap().instruction = super::Instruction::Grab(id as usize);
@@ -42,18 +49,18 @@ mod functions {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        return Variable::Null;
+        return Variable::Bool(true);
     }
 
     pub fn drop(scope: &mut Scope, variables: Vec<Variable>) -> Variable { 
          let x = match variables[0] {
             Variable::Int(x) => x,
-            _ => return Variable::Null,
+            _ => return Variable::Bool(false),
         };
 
         let y = match variables[1] {
             Variable::Int(y) => y,
-            _ => return Variable::Null,
+            _ => return Variable::Bool(false),
         };
 
         scope.script_data.lock().unwrap().instruction = super::Instruction::Drop(super::Vec2::new(x, y));
@@ -62,7 +69,13 @@ mod functions {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        return Variable::Null;
+        if scope.script_data.lock().unwrap().instruction == super::Instruction::Failiure {
+            scope.script_data.lock().unwrap().instruction = super::Instruction::None;
+
+            return Variable::Bool(false);
+        }
+
+        return Variable::Bool(true);
     }
 
     pub fn crates(scope: &mut Scope, _: Vec<Variable>) -> Variable {
@@ -71,16 +84,18 @@ mod functions {
         let mut new_location = 0;
 
         let mut heap = scope.heap.borrow_mut();
-        let mut peekable = heap.iter().peekable();
+        let mut peekable = heap.iter().collect::<Vec<_>>();
+        peekable.sort_by(|a, b| b.0.partial_cmp(a.0).unwrap());
+        let mut peekable = peekable.iter().peekable();
 
         while let Some((location, _)) = peekable.next() {
             if let Some((next_location, _)) = peekable.peek() {
-                if **next_location - location >= 6 * crates.len() {
-                    new_location = location + 1;
+                if **next_location - **location >= 6 {
+                    new_location = **next_location - **location;
                     break;
                 }
             } else {
-                new_location = *location + 1;
+                new_location = **location;
                 break;
             }
         }
@@ -112,6 +127,7 @@ mod functions {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Instruction {
     None,
+    Failiure,
     Goto(Vec2<f32>),
     Grab(usize),
     Drop(Vec2<i32>),
@@ -122,6 +138,7 @@ pub struct Claw {
     pub position: Vec2<f32>,
     pub height: f32,
     pub travel_height: f32,
+    pub grabbed: Option<usize>,
     pub speed: f32,
 }
 
@@ -177,8 +194,9 @@ pub struct Game {
     pub crates: HashMap<usize, Crate>,
     pub falling_crates: Vec<FallingCrate>,
     pub paths: Vec<Vec<Node>>,
-    pub grabbed: Option<usize>,
     pub script_data: Arc<Mutex<ScriptData>>,
+    pub random: Random,
+    pub level_crates: Vec<(i32, &'static str)>,
 }
 
 #[derive(Clone)]
@@ -193,8 +211,9 @@ impl Game {
         let script_data = ScriptData {
             claw: Claw {
                 position: Vec2::new(0.0, 0.0),
-                height: 32.0,
-                travel_height: 16.0,
+                height: 20.0,
+                travel_height: 20.0,
+                grabbed: None,
                 speed: 2.0,
             },
             instruction: Instruction::None,
@@ -213,8 +232,12 @@ impl Game {
             crates: HashMap::new(),
             falling_crates: Vec::new(),
             paths: vec![Vec::new()],
-            grabbed: None,
             script_data: script_data_arc.clone(),
+            random: Random::new(13124),
+            level_crates: vec![
+                (30, "crate_1"),
+                (70, "crate_0")
+            ]
         };
 
         for x in -10..10 {
@@ -283,14 +306,14 @@ impl Game {
 
             interpreter.add_function("goto", 
                                      crate::function!(goto(VarType::Int, VarType::Int) -> VarType::Null));
-            interpreter.add_function("grab", crate::function!(grab(VarType::Int) -> VarType::Null));
-            interpreter.add_function("drop", crate::function!(drop(VarType::Int, VarType::Int) -> VarType::Null));
+            interpreter.add_function("grab", crate::function!(grab(VarType::Int) -> VarType::Bool));
+            interpreter.add_function("drop", crate::function!(drop(VarType::Int, VarType::Int) -> VarType::Bool));
             interpreter.add_function("crates", crate::function!(crates() -> VarType::Slice(Box::new(Var  {
                 var_type: VarType::Struct("crate".to_string()),
                 len: 6,
             }))));
 
-            interpreter.run(code, script_data_arc).unwrap();
+            interpreter.run(code, script_data_arc).expect("interpreter fail");
         });
 
         game
@@ -313,10 +336,18 @@ impl Game {
 
         self.paths[path][0].occupant = Some(self.next_crate);
 
+        let crate_type = loop {
+            let crate_index = self.random.range_i32(0, self.level_crates.len() as i32 - 1) as usize;
+
+            if self.random.range_i32(1, 100) < self.level_crates[crate_index].0 {
+                break self.level_crates[crate_index].1;
+            }
+        };
+
         self.crates.insert(self.next_crate, Crate {
             position: Vec2::new(self.paths[path][0].position.x as f32,
                                 self.paths[path][0].position.y as f32),
-            texture: "crate_0",
+            texture: crate_type,
             height: 0.0,
         });
 
@@ -331,18 +362,18 @@ impl Game {
         let height_difference = target_height - self.claw.height;
 
         if distance < 0.01 {
-            let height_step = height_difference / (height_difference.abs() + std::f32::EPSILON);
+            let height_step = (height_difference) / (height_difference.abs() + std::f32::EPSILON);
 
             self.claw.height += height_step * ((self.claw.speed * 12.0) * delta_time).min(height_difference.abs());
         }
         
-        if let Some(crate_id) = self.grabbed {
-            move_object(&mut self.crates.get_mut(&crate_id).unwrap().position, 
+        if let Some(crate_id) = self.claw.grabbed {
+            move_object(&mut self.crates.get_mut(&crate_id).expect("crate doesnt exist").position, 
                         target, 
                         self.claw.speed, 
                         delta_time);
-
-            self.crates.get_mut(&crate_id).unwrap().height = self.claw.height;
+                        
+            self.crates.get_mut(&crate_id).expect("crate doesnt exist").height = self.claw.height;
         }
 
         distance < 0.01 && height_difference.abs() < 0.01
@@ -353,7 +384,7 @@ pub fn move_object(object: &mut Vec2<f32>, target: Vec2<f32>, speed: f32, delta_
     let difference = target - *object + Vec2::new(std::f32::EPSILON, 0.0);
     let distance = difference.magnitude();
 
-    let step_length = (speed * delta_time).min(distance);
+    let step_length = (speed * delta_time).min(distance) + std::f32::EPSILON;
 
     *object += difference.normalize() * step_length;
 
@@ -380,7 +411,7 @@ impl State for Game {
 
             frame.image(hole.front_texture)
                 .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
-                .depth(-hole.position.from_iso().y / 1000.0)
+                .depth(-hole.position.from_iso().y / 1000.0 + std::f32::EPSILON)
                 .pixel_scale(1.0)
                 .draw();
         }
@@ -389,7 +420,7 @@ impl State for Game {
         for (_, c) in &self.crates {
             frame.image(c.texture)
                 .position(c.position.from_iso() + Vec2::new(0.0, 8.0 + c.height))
-                .depth(-(c.position.from_iso().y - c.height) / 1000.0)
+                .depth(-(c.position.from_iso().y - c.height) / 1000.0 + std::f32::EPSILON)
                 .pixel_scale(1.0)
                 .draw();
         }
@@ -398,7 +429,7 @@ impl State for Game {
         for c in &self.falling_crates {
             frame.image(c.texture)
                 .position(c.position + Vec2::new(0.0, 8.0))
-                .depth(c.depth)
+                .depth(c.depth + std::f32::EPSILON)
                 .pixel_scale(1.0)
                 .draw();
         }
@@ -406,6 +437,7 @@ impl State for Game {
         // draw tiles
         for (position, tile) in &self.tiles {
             let position = Vec2::new(position.0, position.1).from_iso();
+
             frame.image(tile.texture)
                 .position(position - Vec2::new(0.0, 7.0))
                 .depth(-position.y / 1000.0 - 0.01)
@@ -413,36 +445,35 @@ impl State for Game {
                 .draw();
         }
 
-
         let claw_position = self.claw.position.from_iso() - Vec2::new(0.0, 3.0 - self.claw.height);
 
-        // draw claw
-        if self.grabbed.is_some() {
+        // draw claw 
+        if self.claw.grabbed.is_some() {           
             frame.image("claw_back_closed")
                 .position(claw_position)
                 .pivot(Anchor::BottomMiddle)
-                .depth(-claw_position.y / 1000.0 - 0.01)
+                .depth(-(self.claw.position.from_iso() - self.claw.height).y / 1000.0 - 0.01)
                 .pixel_scale(1.0)
                 .draw();
     
             frame.image("claw_closed")
                 .position(claw_position)
                 .pivot(Anchor::BottomMiddle)
-                .depth(-claw_position.y / 1000.0 + 0.015)
+                .depth(-(self.claw.position.from_iso() - self.claw.height).y / 1000.0 + 0.015)
                 .pixel_scale(1.0)
                 .draw();
         } else {
             frame.image("claw_back_open")
                 .position(claw_position)
                 .pivot(Anchor::BottomMiddle)
-                .depth(-claw_position.y / 1000.0 - 0.01)
+                .depth(-(self.claw.position.from_iso() - self.claw.height).y / 1000.0 - 0.01)
                 .pixel_scale(1.0)
                 .draw();
     
             frame.image("claw_open")
                 .position(claw_position)
                 .pivot(Anchor::BottomMiddle)
-                .depth(-claw_position.y / 1000.0 + 0.015)
+                .depth(-(self.claw.position.from_iso() - self.claw.height).y / 1000.0 + 0.015)
                 .pixel_scale(1.0)
                 .draw();
         }
@@ -462,7 +493,7 @@ impl State for Game {
             for i in 0..path_len - 1 {
                 if path[i + 1].moving || path[i + 1].occupant.is_none() {
                     if let Some(crate_id) = path[i].occupant {
-                        let distance = move_object(&mut self.crates.get_mut(&crate_id).unwrap().position,
+                        let distance = move_object(&mut self.crates.get_mut(&crate_id).expect("1").position,
                                                    Vec2::new(path[i + 1].position.x as f32,
                                                              path[i + 1].position.y as f32),
                                                    path[i].speed,
@@ -475,7 +506,7 @@ impl State for Game {
                                 path[i].moving = false;
                                 path[i].occupant = None;
 
-                                let removed_crate = self.crates.remove(&crate_id).unwrap();
+                                let removed_crate = self.crates.remove(&crate_id).expect("2");
                                 self.falling_crates.push(FallingCrate {
                                     position: removed_crate.position.from_iso(),
                                     speed: 0.0,
@@ -516,32 +547,40 @@ impl State for Game {
                 }
             },
             Instruction::Grab(crate_id) => {
-                let target_reached = self.move_arm(self.crates.get(&crate_id).unwrap().position, 
-                                             self.crates.get(&crate_id).unwrap().height,
-                                             data.delta_time);
+                if let Some(c) = self.crates.get(&crate_id) {
+                    let c = c.clone();
+                    
+                    let target_reached = self.move_arm(c.position, 
+                                                       c.height,
+                                                       data.delta_time);
 
-                if target_reached {
-                    'outer: for path in &mut self.paths {
-                        for node in path {
-                            if node.occupant == Some(crate_id) {
-                                node.occupant = None;
-                                node.moving = false;
-
+                    if target_reached {
+                        'outer: for path in &mut self.paths {
+                            for node in path {
+                                if node.occupant == Some(crate_id) {
+                                    node.occupant = None;
+                                    node.moving = false;
+                                    break 'outer;
+                                }
                             }
                         }
-                    }
 
-                    self.grabbed = Some(crate_id);
-                    self.instruction = Instruction::None;
+                        self.claw.grabbed = Some(crate_id);
+                        self.instruction = Instruction::Goto(c.position + std::f32::EPSILON);
+                    }
+                } else {
+                    self.instruction = Instruction::Failiure;
                 }
             },
             Instruction::Drop(target) => { 
                 let mut target_height = -7.0;
 
-                'outer: for path in &mut self.paths {
-                    for node in path {
+                let mut target_node = None;
+
+                'outer: for (path_index, path) in self.paths.iter().enumerate() {
+                    for (node_index, node) in path.iter().enumerate() {
                         if node.position == target {
-                            node.occupant = self.grabbed;
+                            target_node = Some((path_index, node_index));
                             target_height = 0.0;
                             break 'outer;
                         }
@@ -549,17 +588,33 @@ impl State for Game {
                 }
 
                 let target_reached = self.move_arm(Vec2::new(target.x as f32, target.y as f32), 
-                                             target_height,
-                                             data.delta_time);
+                                                   target_height,
+                                                   data.delta_time);
 
                 if target_reached {
-                    self.crates.get_mut(&self.grabbed.unwrap()).unwrap().height = target_height; 
+                    if let Some(grabbed) = self.claw.grabbed {
+                        self.crates.get_mut(&grabbed).expect("6").height = target_height; 
 
-                    self.grabbed = None;
-                    self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
+                        if let Some((path, node)) = target_node {
+                            if self.paths[path][node].occupant.is_none() {
+                                self.paths[path][node].occupant = self.claw.grabbed;
+                            }
+                        } else {
+                            self.claw.grabbed = None;
+                        }
+
+                        self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
+                    } else {
+                        self.instruction = Instruction::Failiure;
+                    }
                 }
             },
-            Instruction::None => ()
+            Instruction::None => {
+                self.move_arm(self.claw.position, self.claw.travel_height, data.delta_time);
+            },
+            Instruction::Failiure => {
+                self.instruction = Instruction::None;
+            },
         }
 
         script_data.instruction = self.instruction.clone();

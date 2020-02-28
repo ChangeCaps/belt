@@ -118,6 +118,38 @@ pub fn parse(
 
         lexer.restart();
 
+        if lexer.find("while") {
+            if lexer.skip_space() {
+                if let Some(check) = lexer.get("{") {
+                    lexer.find("{");
+                    if let Some(mut scope) = lexer.get_expansive("{", "}") {
+                        lexer.find("}");
+
+                        let (token, var) = parse_token_tree(check, &structs, &vars, &functions)?;
+
+                        if var.var_type == VarType::Bool {
+                            instructions.push(
+                                Instruction::While(
+                                    token,
+                                    parse(&mut scope, structs.clone(), vars.clone(), functions.clone())?
+                                )
+                            );
+                            lexer.confirm();
+                            continue;
+                        } else {
+                            return Err(ParseError::TypeMismatch(format!("Tried to check '{:?}'", var.var_type).to_string()))
+                        }
+                    } else {
+                        return Err(ParseError::MissingToken("'}' in if statement"));
+                    }
+                } else {
+                    return Err(ParseError::MissingToken("'{' in if statement"));
+                }
+            }
+        }
+
+        lexer.restart();
+
         // look for pattern return#;
         if lexer.find("return") {
             if lexer.skip_space() {
@@ -766,6 +798,20 @@ pub fn parse_token_tree(
 
         if lhs.1 == rhs.1 {
             return Ok((Token::Eq(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1 }));
+        } else {
+            return Err(ParseError::TypeMismatch(format!("Tried to compare '{:?}' and '{:?}'", lhs.1.var_type, rhs.1.var_type).to_string()));
+        }
+    }
+
+    if let Some(token) = lexer.get("!=") {
+        lexer.find("!=");
+        lexer.confirm();
+
+        let lhs = parse_token_tree(token, structs, vars, functions)?;
+        let rhs = parse_token_tree(string, structs, vars, functions)?;
+
+        if lhs.1 == rhs.1 {
+            return Ok((Token::Neq(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1 }));
         } else {
             return Err(ParseError::TypeMismatch(format!("Tried to compare '{:?}' and '{:?}'", lhs.1.var_type, rhs.1.var_type).to_string()));
         }
