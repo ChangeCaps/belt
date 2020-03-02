@@ -789,6 +789,18 @@ pub fn parse_token_tree(
         }
     }
 
+    if lexer.find("!") {
+        lexer.confirm();
+
+        let exp = parse_token_tree(string, structs, vars, functions)?;
+
+        if exp.1.var_type == VarType::Bool {
+            return Ok((Token::Not(Box::new(exp.0)), exp.1));
+        } else {
+            return Err(ParseError::InvalidOperator(format!("'!' on '{:?}'", exp.1.var_type).to_string()));
+        }
+    }
+
     if let Some(lhs) = lexer.get("<") {
         lexer.find("<");
         lexer.confirm();

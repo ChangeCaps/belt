@@ -7,7 +7,6 @@ use std::collections::HashMap;
 
 mod functions {
     use crate::language::*;
-    use crate::isometric::*;
 
     pub fn goto(scope: &mut Scope, variables: Vec<Variable>) -> Variable {
         let x = match variables[0] {
@@ -421,13 +420,13 @@ pub fn move_object(object: &mut Vec2<f32>, target: Vec2<f32>, speed: f32, delta_
 }
 
 impl State for Game {
-    fn draw(&self, frame: &mut Frame, data: &StateData) {
+    fn draw(&self, frame: &mut Frame, _data: &StateData) {
         // draw tiles
         for belt in &self.belts {
             frame.image(belt.texture)
-                .position(belt.position.from_iso() - Vec2::new(2.5, 3.0))
+                .position(belt.position.from_iso() - Vec2::new(2.0, 3.0))
                 .depth(-belt.position.from_iso().y / 1000.0 - 0.011)
-                .pixel_scale(1.0)
+                .pixel_scale(1.0001)
                 .draw();
         }
 
@@ -435,13 +434,13 @@ impl State for Game {
             frame.image(hole.back_texture)
                 .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
                 .depth(-hole.position.from_iso().y / 1000.0 - 0.2)
-                .pixel_scale(1.0)
+                .pixel_scale(1.0001)
                 .draw();
 
             frame.image(hole.front_texture)
                 .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
                 .depth(-hole.position.from_iso().y / 1000.0 + std::f32::EPSILON)
-                .pixel_scale(1.0)
+                .pixel_scale(1.0001)
                 .draw();
         }
 
@@ -470,7 +469,7 @@ impl State for Game {
             frame.image(tile.texture)
                 .position(position - Vec2::new(0.0, 7.0))
                 .depth(-position.y / 1000.0 - 0.01)
-                .pixel_scale(1.0)
+                .pixel_scale(1.0001)
                 .draw();
         }
 

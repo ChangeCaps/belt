@@ -6,16 +6,29 @@ while true {
 
 	let len = len(crates);
 
+	let min = 0;
+	let found = false;
+
 	while index < len {
 		if crates[index].type == "crate_1" {
 			if crates[index].id > max {
-				let id = crates[index].id;
-				max = id;
-				grab(id);
-				drop(1, 1);
+				if !found {
+					found = true;
+					min = index;
+				}
+
+				if crates[index].id < crates[min].id {
+					min = index;
+				}
 			}
 		}
 
 		index = index + 1;
+	}
+
+	if found {
+		max = crates[min].id;
+		grab(crates[min].id);
+		drop(1, 1);
 	}
 }

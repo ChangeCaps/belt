@@ -716,6 +716,8 @@ impl<'s> Scope<'s> {
 
     pub fn run(&mut self) -> Result<(Variable, usize), Error> {
         for token in self.instructions.clone().iter() {
+            std::thread::sleep(std::time::Duration::from_secs_f32(0.0001));
+
             match token {
                 Instruction::InitVariable(key, token_tree) => {
                     let index = self.stack.borrow().len();
