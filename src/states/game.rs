@@ -433,7 +433,7 @@ impl State for Game {
         for hole in &self.holes {
             frame.image(hole.back_texture)
                 .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
-                .depth(-hole.position.from_iso().y / 1000.0 - 0.2)
+                .depth(-hole.position.from_iso().y / 1000.0 - 0.006)
                 .pixel_scale(1.0001)
                 .draw();
 
