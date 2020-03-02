@@ -85,22 +85,22 @@ mod functions {
 
         let mut heap = scope.heap.borrow_mut();
         let mut peekable = heap.iter().collect::<Vec<_>>();
-        peekable.sort_by(|a, b| b.0.partial_cmp(a.0).unwrap());
+        peekable.sort_by(|a, b| a.0.partial_cmp(b.0).unwrap());
         let mut peekable = peekable.iter().peekable();
 
         while let Some((location, _)) = peekable.next() {
             if let Some((next_location, _)) = peekable.peek() {
-                if **next_location - **location >= 6 {
-                    new_location = **next_location - **location;
+                if **next_location - **location >= 6 * crates.len() {
+                    new_location = **location + 1;
                     break;
                 }
             } else {
-                new_location = **location;
+                new_location = **location + 1;
                 break;
             }
         }
 
-        for (i, (_, c)) in crates.iter().enumerate() {
+        for (i, (id, c)) in crates.iter().enumerate() {
             let index = i * 6 + new_location;
 
             let mut vector_fields = std::collections::HashMap::new();
@@ -112,7 +112,7 @@ mod functions {
             let mut fields = std::collections::HashMap::new();
             heap.insert(index + 1, Variable::Struct(vector_fields));
             heap.insert(index + 4, Variable::String(c.texture.to_string()));
-            heap.insert(index + 5, Variable::Int(i as i32));
+            heap.insert(index + 5, Variable::Int(*id as i32));
             fields.insert("position".to_string(), 1);
             fields.insert("type".to_string(), 4);
             fields.insert("id".to_string(), 5);
@@ -214,7 +214,7 @@ impl Game {
                 height: 20.0,
                 travel_height: 20.0,
                 grabbed: None,
-                speed: 2.0,
+                speed: 3.0,
             },
             instruction: Instruction::None,
             crates: HashMap::new(),
@@ -231,7 +231,7 @@ impl Game {
             tiles: HashMap::new(),
             crates: HashMap::new(),
             falling_crates: Vec::new(),
-            paths: vec![Vec::new()],
+            paths: vec![Vec::new(), Vec::new()],
             script_data: script_data_arc.clone(),
             random: Random::new(13124),
             level_crates: vec![
@@ -264,14 +264,43 @@ impl Game {
             });
         }
 
+        for i in 0..4 {
+            let i = 3 - i;
+
+            game.paths[1].push(Node {
+                position: Vec2::new(1, i),
+                occupant: None,
+                moving: false,
+                speed: 2.0/3.0,
+            });
+
+            game.spawn_belt(Belt {
+                position: Vec2::new(1, i),
+                texture: "belt",
+            });
+        }
+
         game.spawn_hole(Hole {
             position: Vec2::new(0, -1),
             back_texture: "hole_back_blue",
             front_texture: "hole_front_blue",
         });
 
+        game.spawn_hole(Hole {
+            position: Vec2::new(1, -1),
+            back_texture: "hole_back_blue",
+            front_texture: "hole_front_blue",
+        });
+
         game.paths[0].push(Node {
             position: Vec2::new(0, -1),
+            occupant: None,
+            moving: false,
+            speed: 2.0/3.0,
+        });
+
+        game.paths[1].push(Node {
+            position: Vec2::new(1, -1),
             occupant: None,
             moving: false,
             speed: 2.0/3.0,
@@ -598,6 +627,7 @@ impl State for Game {
                         if let Some((path, node)) = target_node {
                             if self.paths[path][node].occupant.is_none() {
                                 self.paths[path][node].occupant = self.claw.grabbed;
+                                self.claw.grabbed = None;
                             }
                         } else {
                             self.claw.grabbed = None;

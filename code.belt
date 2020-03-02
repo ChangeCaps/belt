@@ -1,13 +1,19 @@
+let max = 0;
+
 while true {
 	let index = 0;
 	let crates = crates();
 
-	while index != len(crates) {
+	let len = len(crates);
+
+	while index < len {
 		if crates[index].type == "crate_1" {
-			let id = crates[index].id;
-			print(id);
-			grab(id);
-			drop(1, 1);
+			if crates[index].id > max {
+				let id = crates[index].id;
+				max = id;
+				grab(id);
+				drop(1, 1);
+			}
 		}
 
 		index = index + 1;

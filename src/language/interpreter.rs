@@ -108,7 +108,9 @@ impl Function {
 
                 let output = function(&mut scope, params.clone());
 
-                scope.free();
+                for param in params {
+                    param.free(&mut scope);
+                }
 
                 Ok((output, 0))
             },
@@ -129,7 +131,8 @@ impl Function {
                     let mut value = v.resolve(&mut scope)?;
                     
                     if let Variable::Ref(Ref::Local(reference)) = value {
-                        value = Variable::Ref(Ref::Global(*scope.locals.get(&reference).expect("local entry doesnt exist")));
+                        value = Variable::Ref(Ref::Global(
+                                *scope.locals.get(&reference).expect("local entry doesnt exist")));
                     }
 
                     scope.stack.borrow_mut()[index] = value;
@@ -259,6 +262,8 @@ pub enum Token {
     Div(Box<Token>, Box<Token>),
     Eq(Box<Token>, Box<Token>),
     Neq(Box<Token>, Box<Token>),
+    Lt(Box<Token>, Box<Token>),
+    Gt(Box<Token>, Box<Token>),
     Not(Box<Token>),
 }
 
@@ -271,11 +276,12 @@ impl Token {
             Token::Deref(token, len) => {
                 if let Variable::Ref(reference) = token.resolve(scope)? {
                     let location = match reference {
-                        Ref::Local(reference) => *scope.locals.get(&reference).expect("heap entry doesnt exist"),
+                        Ref::Local(reference) => *scope.locals.get(&reference).expect("local entry doesnt exist"),
                         Ref::Global(reference) => reference,
                         Ref::Heap(location) => {
                             if let Variable::Slice(location, len, element_len) = 
-                                scope.heap.borrow().get(&location).expect("heap entry doesnt exist")
+                                scope.heap.borrow().get(&location)
+                                    .expect(&format!("heap entry doesnt exist (deref slice) {:?}", token))
                             {
                                 let mut new_location = 0;
      
@@ -286,49 +292,36 @@ impl Token {
 
                                 while let Some((location, _)) = peekable.next() {
                                     if let Some((next_location, _)) = peekable.peek() {
-                                        if **next_location - **location >= *len {
-                                            new_location = **next_location - **location;
+                                        if **next_location - **location >= *len * *element_len {
+                                            new_location = **location + 1;
                                             break;
                                         }
                                     } else {
-                                        new_location = **location;
+                                        new_location = **location + 1;
                                         break;
                                     }
                                 }                                 
      
                                 for i in 0..len * element_len {
-                                    let variable = heap.get(&(location + i)).expect("heap entry doesnt exist").clone();
+                                    let variable = heap.get(&(location + i))
+                                        .expect("heap entry doesnt exist (deref)").clone();
+
                                     heap.insert(new_location + i, variable);
                                 }
      
                                 return Ok(Variable::Slice(new_location, *len, *element_len));
                             }
-                             
-                            let mut new_location = 0;
-
-                            let heap = scope.heap.borrow();
-                            let mut peekable = heap.iter().collect::<Vec<_>>();
-                            peekable.sort_by(|a, b| a.0.partial_cmp(b.0).unwrap());
-                            let mut peekable = peekable.iter().peekable();
-
-                            while let Some((location, _)) = peekable.next() {
-                                if let Some((next_location, _)) = peekable.peek() {
-                                    if **next_location - **location >= *len {
-                                        new_location = **next_location - **location;
-                                        break;
-                                    }
-                                } else {
-                                    new_location = **location;
-                                    break;
-                                }
-                            }
 
                             for i in 1..*len { 
-                                let variable = scope.heap.borrow().get(&(location + i)).expect("heap entry doesnt exist").clone();
-                                scope.heap.borrow_mut().insert(new_location + i, variable);
+                                scope.stack_len += 1;
+                                
+                                let variable = scope.heap.borrow().get(&(location + i))
+                                    .expect("heap entry doesnt exist").clone();
+
+                                scope.stack.borrow_mut().push(variable);
                             }
      
-                            return Ok(scope.heap.borrow().get(&location).expect("heap entry doesnt exist").clone());
+                            return Ok(scope.heap.borrow().get(&location).unwrap().clone());
                         }
                     };
 
@@ -343,11 +336,11 @@ impl Token {
                         while let Some((location, _)) = peekable.next() {
                             if let Some((next_location, _)) = peekable.peek() {
                                 if **next_location - **location >= len as usize * element_len {
-                                    new_location = **next_location - **location;
+                                    new_location = **location + 1;
                                     break;
                                 }
                             } else {
-                                new_location = **location;
+                                new_location = **location + 1;
                                 break;
                             }
                         }
@@ -461,7 +454,7 @@ impl Token {
                             (&mut stack[reference], reference)
                         },
                         Ref::Heap(reference) => {
-                            (heap.get_mut(&reference).expect("heap entry doesnt exist"), reference)
+                            (heap.get_mut(&reference).expect("heap entry doesnt exist (index)"), reference)
                         },
                     };
 
@@ -471,9 +464,9 @@ impl Token {
                         } else {
                             return Err(Error::IndexError("Arrays are only indexed by integers"));
                         }
-                    } else if let Variable::Slice(location, _, _) = array {
-                        if let Variable::Int(index) = index {
-                            return Ok(Variable::Ref(Ref::Heap(*location + index as usize * *element_len)));
+                    } else if let Variable::Slice(location, _, _) = *array {
+                        if let Variable::Int(index) = index { 
+                            return Ok(Variable::Ref(Ref::Heap(location + index as usize * *element_len)));
                         } else {
                             return Err(Error::IndexError("Slices are only indexed by integers"));
                         }
@@ -526,11 +519,11 @@ impl Token {
                     while let Some((location, _)) = peekable.next() {
                         if let Some((next_location, _)) = peekable.peek() {
                             if **next_location - **location >= len as usize * *element_len {
-                                new_location = **next_location - **location;
+                                new_location = **location + 1;
                                 break;
                             }
                         } else {
-                            new_location = **location;
+                            new_location = **location + 1;
                             break;
                         }
                     }
@@ -587,6 +580,48 @@ impl Token {
                 rhs.free(scope);
 
                 return Ok(output);            
+            },
+            Token::Lt(lhs, rhs) => {
+                let lhs = lhs.resolve(scope)?;
+                let rhs = rhs.resolve(scope)?;
+
+                if let Variable::Float(lhs) = lhs {
+                    if let Variable::Float(rhs) = rhs {
+                        return Ok(Variable::Bool(lhs < rhs));
+                    }
+                }
+
+                if let Variable::Int(lhs) = lhs {
+                    if let Variable::Int(rhs) = rhs {
+                        return Ok(Variable::Bool(lhs < rhs));
+                    }
+                }
+
+                lhs.free(scope);
+                rhs.free(scope);
+
+                return Err(Error::InvalidOperatorApplication(format!("'{:?}' < '{:?}'", lhs, rhs).to_string()));
+            },
+            Token::Gt(lhs, rhs) => {
+                let lhs = lhs.resolve(scope)?;
+                let rhs = rhs.resolve(scope)?;
+
+                if let Variable::Float(lhs) = lhs {
+                    if let Variable::Float(rhs) = rhs {
+                        return Ok(Variable::Bool(lhs > rhs));
+                    }
+                }
+
+                if let Variable::Int(lhs) = lhs {
+                    if let Variable::Int(rhs) = rhs {
+                        return Ok(Variable::Bool(lhs > rhs));
+                    }
+                }
+
+                lhs.free(scope);
+                rhs.free(scope);
+
+                return Err(Error::InvalidOperatorApplication(format!("'{:?}' > '{:?}'", lhs, rhs).to_string()));
             },
             Token::Not(exp) => {
                 if let Variable::Bool(exp) = exp.resolve(scope)? {

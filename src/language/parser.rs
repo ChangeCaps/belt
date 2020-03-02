@@ -789,6 +789,42 @@ pub fn parse_token_tree(
         }
     }
 
+    if let Some(lhs) = lexer.get("<") {
+        lexer.find("<");
+        lexer.confirm();
+
+        let lhs = parse_token_tree(lhs, structs, vars,functions)?;
+        let rhs = parse_token_tree(string, structs, vars, functions)?;
+
+        if lhs.1.var_type == VarType::Float && rhs.1.var_type == VarType::Float {
+            return Ok((Token::Lt(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1}));
+        }
+
+        if lhs.1.var_type == VarType::Int && rhs.1.var_type == VarType::Int {
+            return Ok((Token::Lt(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1}));
+        }
+
+        return Err(ParseError::TypeMismatch(format!("'{:?}' < '{:?}'", lhs, rhs).to_string()));
+    }
+
+    if let Some(lhs) = lexer.get(">") {
+        lexer.find(">");
+        lexer.confirm();
+
+        let lhs = parse_token_tree(lhs, structs, vars,functions)?;
+        let rhs = parse_token_tree(string, structs, vars, functions)?;
+
+        if lhs.1.var_type == VarType::Float && rhs.1.var_type == VarType::Float {
+            return Ok((Token::Gt(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1}));
+        }
+
+        if lhs.1.var_type == VarType::Int && rhs.1.var_type == VarType::Int {
+            return Ok((Token::Gt(Box::new(lhs.0), Box::new(rhs.0)), Var { var_type: VarType::Bool, len: 1}));
+        }
+
+        return Err(ParseError::TypeMismatch(format!("'{:?}' > '{:?}'", lhs, rhs).to_string()));
+    }
+
     if let Some(token) = lexer.get("==") {
         lexer.find("==");
         lexer.confirm();
