@@ -165,19 +165,6 @@ pub struct Claw {
     pub speed: f32,
 }
 
-#[derive(Clone)]
-pub struct Belt {
-    pub position: Vec2<i32>,
-    pub texture: &'static str,
-}
-
-#[derive(Clone)]
-pub struct Hole {
-    pub position: Vec2<i32>,
-    pub back_texture: &'static str,
-    pub front_texture: &'static str,
-}
-
 #[derive(Clone, Debug)]
 pub struct Crate {
     pub position: Vec2<f32>,
@@ -195,40 +182,15 @@ pub struct FallingCrate {
 }
 
 #[derive(Clone)]
-pub struct Tile {
-    pub texture: &'static str,
-}
-
-#[derive(Clone, Debug)]
-pub struct Node {
-    pub position: Vec2<i32>,
-    pub occupant: Option<usize>,
-    pub moving: bool,
-    pub speed: f32,
-}
-
-#[derive(Clone)]
-pub struct Spawner {
-    pub time: f32,
-    pub max_time: f32,
-    pub crates: Vec<(i32, &'static str)>,
-    pub paths: Vec<(i32, usize)>,
-}
-
-#[derive(Clone)]
 pub struct Game {
     pub claw: Claw,
     pub instruction: Instruction,
     pub next_crate: usize,
-    pub belts: Vec<Belt>,
-    pub holes: Vec<Hole>,
-    pub tiles: HashMap<(i32, i32), Tile>,
+    pub level: crate::level::Level,
     pub crates: HashMap<usize, Crate>,
     pub falling_crates: Vec<FallingCrate>,
-    pub paths: Vec<Vec<Node>>,
     pub script_data: Arc<Mutex<ScriptData>>,
     pub random: Random,
-    pub spawners: Vec<Spawner>,
 }
 
 #[derive(Clone)]
@@ -239,7 +201,7 @@ pub struct ScriptData {
 }
 
 impl Game {
-    pub fn new(code: String) -> Self {
+    pub fn new(code: String, level: String) -> Self {
         let script_data = ScriptData {
             claw: Claw {
                 position: Vec2::new(0.0, 0.0),
@@ -258,95 +220,12 @@ impl Game {
             claw: script_data.claw,
             instruction: script_data.instruction,
             next_crate: 0,
-            belts: Vec::new(),
-            holes: Vec::new(),
-            tiles: HashMap::new(),
+            level: crate::level::Level::load(level),
             crates: HashMap::new(),
             falling_crates: Vec::new(),
-            paths: vec![Vec::new(), Vec::new()],
             script_data: script_data_arc.clone(),
             random: Random::new(13124),
-            spawners: vec![
-                Spawner {
-                    time: 0.0,
-                    max_time: 2.0,
-                    crates: vec![
-                        (50, "crate_1"),
-                        (50, "crate_0"),
-                    ],
-                    paths: vec![
-                        (50, 0),
-                        (50, 1),
-                    ],
-                }
-            ],
         };
-
-        for x in -10..10 {
-            for y in -10..10 {
-                game.tiles.insert((x, y), Tile {
-                    texture: "floor",
-                });
-            }
-        }
-
-        for i in 0..9 {
-            let i = 8 - i;
-
-            game.paths[0].push(Node {
-                position: Vec2::new(0, i),
-                occupant: None,
-                moving: false,
-                speed: 2.0/3.0,
-            });
-
-            game.spawn_belt(Belt {
-                position: Vec2::new(0, i),
-                texture: "belt",
-            });
-        }
-
-        for i in 0..9 {
-            let i = 8 - i;
-
-            game.paths[1].push(Node {
-                position: Vec2::new(1, i),
-                occupant: None,
-                moving: false,
-                speed: 2.0/3.0,
-            });
-
-            game.spawn_belt(Belt {
-                position: Vec2::new(1, i),
-                texture: "belt",
-            });
-        }
-
-        game.spawn_hole(Hole {
-            position: Vec2::new(0, -1),
-            back_texture: "hole_back_blue",
-            front_texture: "hole_front_blue",
-        });
-
-        game.spawn_hole(Hole {
-            position: Vec2::new(1, -1),
-            back_texture: "hole_back_blue",
-            front_texture: "hole_front_blue",
-        });
-
-        game.paths[0].push(Node {
-            position: Vec2::new(0, -1),
-            occupant: None,
-            moving: false,
-            speed: 2.0/3.0,
-        });
-
-        game.paths[1].push(Node {
-            position: Vec2::new(1, -1),
-            occupant: None,
-            moving: false,
-            speed: 2.0/3.0,
-        });
 
         thread::spawn(move || {
             use crate::language::*;
@@ -391,16 +270,6 @@ impl Game {
         game
     } 
 
-    pub fn spawn_belt(&mut self, belt: Belt) {
-        self.tiles.remove(&(belt.position.x, belt.position.y));
-        self.belts.push(belt);
-    }
-
-    pub fn spawn_hole(&mut self, hole: Hole) {
-        self.tiles.remove(&(hole.position.x, hole.position.y));
-        self.holes.push(hole);
-    }
-
     pub fn move_arm(&mut self, target: Vec2<f32>, target_height: f32, delta_time: f32) -> bool {
         let distance = move_object(&mut self.claw.position, target, self.claw.speed, delta_time);
 
@@ -438,28 +307,7 @@ pub fn move_object(object: &mut Vec2<f32>, target: Vec2<f32>, speed: f32, delta_
 
 impl State for Game {
     fn draw(&self, frame: &mut Frame, _data: &StateData) {
-        // draw tiles
-        for belt in &self.belts {
-            frame.image(belt.texture)
-                .position(belt.position.from_iso() - Vec2::new(2.0, 3.0))
-                .depth(-belt.position.from_iso().y / 1000.0 - 0.011)
-                .pixel_scale(1.0001)
-                .draw();
-        }
-
-        for hole in &self.holes {
-            frame.image(hole.back_texture)
-                .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
-                .depth(-hole.position.from_iso().y / 1000.0 - 0.006)
-                .pixel_scale(1.0001)
-                .draw();
-
-            frame.image(hole.front_texture)
-                .position(hole.position.from_iso() - Vec2::new(0.0, 7.0))
-                .depth(-hole.position.from_iso().y / 1000.0 + std::f32::EPSILON)
-                .pixel_scale(1.0001)
-                .draw();
-        }
+        self.level.draw(frame);
 
         // draw crates
         for (_, c) in &self.crates {
@@ -476,17 +324,6 @@ impl State for Game {
                 .position(c.position + Vec2::new(0.0, 8.0))
                 .depth(c.depth + std::f32::EPSILON)
                 .pixel_scale(1.0)
-                .draw();
-        }
-
-        // draw tiles
-        for (position, tile) in &self.tiles {
-            let position = Vec2::new(position.0, position.1).from_iso();
-
-            frame.image(tile.texture)
-                .position(position - Vec2::new(0.0, 7.0))
-                .depth(-position.y / 1000.0 - 0.01)
-                .pixel_scale(1.0001)
                 .draw();
         }
 
@@ -538,7 +375,7 @@ impl State for Game {
         let mut script_data = script_data.lock().unwrap();
         self.instruction = script_data.instruction.clone();
 
-        for spawner in &mut self.spawners {
+        for spawner in &mut self.level.spawners {
             spawner.time -= data.delta_time;
 
             if spawner.time <= 0.0 {
@@ -666,13 +503,11 @@ impl State for Game {
 
                 let mut target_node = None;
 
-                'outer: for (path_index, path) in self.paths.iter().enumerate() {
-                    for (node_index, node) in path.iter().enumerate() {
-                        if node.position == target {
-                            target_node = Some((path_index, node_index));
-                            target_height = 0.0;
-                            break 'outer;
-                        }
+                'outer: for (path_index, path) in self.level.nodes.iter().enumerate() {
+                    if node.position == target {
+                        target_node = Some((path_index, node_index));
+                        target_height = 0.0;
+                        break 'outer;
                     }
                 }
 

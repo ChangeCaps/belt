@@ -32,7 +32,7 @@ impl Random {
     
     pub fn range_usize(&mut self, min: usize, max: usize) -> usize {
         let min = min.min(max);
-        let range = (max as i32 - min as i32).abs() as usize + 1;
+        let range = (max as i128 - min as i128).abs() as usize + 1;
 
         self.next() as usize % range + min
     }
