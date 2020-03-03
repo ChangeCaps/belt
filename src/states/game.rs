@@ -23,8 +23,14 @@ mod functions {
             fumarole::Vec2::new(x as f32, y as f32)
         );
 
-        while scope.script_data.lock().unwrap().instruction != super::Instruction::None {
+        while scope.script_data.lock().unwrap().instruction.running() {
             std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        if scope.script_data.lock().unwrap().instruction == super::Instruction::Failiure {
+            scope.script_data.lock().unwrap().instruction = super::Instruction::None;
+
+            return Variable::Bool(false);
         }
 
         return Variable::Null
@@ -44,8 +50,14 @@ mod functions {
 
         scope.script_data.lock().unwrap().instruction = super::Instruction::Grab(id as usize);
 
-        while scope.script_data.lock().unwrap().instruction != super::Instruction::None {
+        while scope.script_data.lock().unwrap().instruction.running() {
             std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        if scope.script_data.lock().unwrap().instruction == super::Instruction::Failiure {
+            scope.script_data.lock().unwrap().instruction = super::Instruction::None;
+
+            return Variable::Bool(false);
         }
 
         return Variable::Bool(true);
@@ -64,7 +76,7 @@ mod functions {
 
         scope.script_data.lock().unwrap().instruction = super::Instruction::Drop(super::Vec2::new(x, y));
 
-        while scope.script_data.lock().unwrap().instruction != super::Instruction::None {
+        while scope.script_data.lock().unwrap().instruction.running() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
@@ -89,7 +101,7 @@ mod functions {
 
         while let Some((location, _)) = peekable.next() {
             if let Some((next_location, _)) = peekable.peek() {
-                if **next_location - **location >= 6 * crates.len() {
+                if **next_location - **location >= 7 * crates.len() {
                     new_location = **location + 1;
                     break;
                 }
@@ -100,11 +112,11 @@ mod functions {
         }
 
         for (i, (id, c)) in crates.iter().enumerate() {
-            let index = i * 6 + new_location;
+            let index = i * 7 + new_location;
 
             let mut vector_fields = std::collections::HashMap::new();
-            heap.insert(index + 2, Variable::Float(c.position.x));
-            heap.insert(index + 3, Variable::Float(c.position.y));
+            heap.insert(index + 2, Variable::Int(c.position.x.round() as i32));
+            heap.insert(index + 3, Variable::Int(c.position.y.floor() as i32));
             vector_fields.insert("x".to_string(), 1);
             vector_fields.insert("y".to_string(), 2);
 
@@ -112,14 +124,16 @@ mod functions {
             heap.insert(index + 1, Variable::Struct(vector_fields));
             heap.insert(index + 4, Variable::String(c.texture.to_string()));
             heap.insert(index + 5, Variable::Int(*id as i32));
+            heap.insert(index + 6, Variable::Int(c.path as i32));
             fields.insert("position".to_string(), 1);
             fields.insert("type".to_string(), 4);
             fields.insert("id".to_string(), 5);
+            fields.insert("belt".to_string(), 6);
 
             heap.insert(index, Variable::Struct(fields));
         }
 
-        return Variable::Slice(new_location, crates.len(), 6);
+        return Variable::Slice(new_location, crates.len(), 7);
     }
 }
 
@@ -130,6 +144,16 @@ pub enum Instruction {
     Goto(Vec2<f32>),
     Grab(usize),
     Drop(Vec2<i32>),
+}
+
+impl Instruction {
+    pub fn running(&self) -> bool {
+        match self {
+            Instruction::None => false,
+            Instruction::Failiure => false,
+            _ => true
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -157,6 +181,7 @@ pub struct Hole {
 #[derive(Clone, Debug)]
 pub struct Crate {
     pub position: Vec2<f32>,
+    pub path: usize,
     pub height: f32,
     pub texture: &'static str,
 }
@@ -183,6 +208,14 @@ pub struct Node {
 }
 
 #[derive(Clone)]
+pub struct Spawner {
+    pub time: f32,
+    pub max_time: f32,
+    pub crates: Vec<(i32, &'static str)>,
+    pub paths: Vec<(i32, usize)>,
+}
+
+#[derive(Clone)]
 pub struct Game {
     pub claw: Claw,
     pub instruction: Instruction,
@@ -195,7 +228,7 @@ pub struct Game {
     pub paths: Vec<Vec<Node>>,
     pub script_data: Arc<Mutex<ScriptData>>,
     pub random: Random,
-    pub level_crates: Vec<(i32, &'static str)>,
+    pub spawners: Vec<Spawner>,
 }
 
 #[derive(Clone)]
@@ -233,10 +266,20 @@ impl Game {
             paths: vec![Vec::new(), Vec::new()],
             script_data: script_data_arc.clone(),
             random: Random::new(13124),
-            level_crates: vec![
-                (30, "crate_1"),
-                (70, "crate_0")
-            ]
+            spawners: vec![
+                Spawner {
+                    time: 0.0,
+                    max_time: 2.0,
+                    crates: vec![
+                        (50, "crate_1"),
+                        (50, "crate_0"),
+                    ],
+                    paths: vec![
+                        (50, 0),
+                        (50, 1),
+                    ],
+                }
+            ],
         };
 
         for x in -10..10 {
@@ -263,8 +306,8 @@ impl Game {
             });
         }
 
-        for i in 0..4 {
-            let i = 3 - i;
+        for i in 0..9 {
+            let i = 8 - i;
 
             game.paths[1].push(Node {
                 position: Vec2::new(1, i),
@@ -313,8 +356,8 @@ impl Game {
             let mut interpreter = Interpreter::new();
 
             let mut vector_fields = std::collections::HashMap::new();
-            vector_fields.insert("x".to_string(), Var { var_type: VarType::Float, len: 1 });
-            vector_fields.insert("y".to_string(), Var { var_type: VarType::Float, len: 1 });
+            vector_fields.insert("x".to_string(), Var { var_type: VarType::Int, len: 1 });
+            vector_fields.insert("y".to_string(), Var { var_type: VarType::Int, len: 1 });
 
             interpreter.add_struct("vector", Struct {
                 fields: vector_fields,
@@ -326,10 +369,11 @@ impl Game {
                                 Var { var_type: VarType::Struct("vector".to_string()), len: 3 });
             crate_fields.insert("type".to_string(), Var { var_type: VarType::String, len: 1 });
             crate_fields.insert("id".to_string(), Var { var_type: VarType::Int, len: 1 });
+            crate_fields.insert("belt".to_string(), Var { var_type: VarType::Int, len: 1 });
 
             interpreter.add_struct("crate", Struct {
                 fields: crate_fields,
-                len: 6
+                len: 7
             });
 
             interpreter.add_function("goto", 
@@ -338,7 +382,7 @@ impl Game {
             interpreter.add_function("drop", crate::function!(drop(VarType::Int, VarType::Int) -> VarType::Bool));
             interpreter.add_function("crates", crate::function!(crates() -> VarType::Slice(Box::new(Var  {
                 var_type: VarType::Struct("crate".to_string()),
-                len: 6,
+                len: 7,
             }))));
 
             interpreter.run(code, script_data_arc).expect("interpreter fail");
@@ -357,37 +401,10 @@ impl Game {
         self.holes.push(hole);
     }
 
-    pub fn spawn_crate(&mut self, path: usize) -> Result<(), ()> {
-        if self.paths[path][0].occupant.is_some() {
-            return Err(());
-        }
-
-        self.paths[path][0].occupant = Some(self.next_crate);
-
-        let crate_type = loop {
-            let crate_index = self.random.range_i32(0, self.level_crates.len() as i32 - 1) as usize;
-
-            if self.random.range_i32(1, 100) < self.level_crates[crate_index].0 {
-                break self.level_crates[crate_index].1;
-            }
-        };
-
-        self.crates.insert(self.next_crate, Crate {
-            position: Vec2::new(self.paths[path][0].position.x as f32,
-                                self.paths[path][0].position.y as f32),
-            texture: crate_type,
-            height: 0.0,
-        });
-
-        self.next_crate += 1;
-
-        Ok(())
-    }
-
     pub fn move_arm(&mut self, target: Vec2<f32>, target_height: f32, delta_time: f32) -> bool {
         let distance = move_object(&mut self.claw.position, target, self.claw.speed, delta_time);
 
-        let height_difference = target_height - self.claw.height;
+        let height_difference = target_height - self.claw.height + std::f32::EPSILON;
 
         if distance < 0.01 {
             let height_step = (height_difference) / (height_difference.abs() + std::f32::EPSILON);
@@ -409,14 +426,14 @@ impl Game {
 }
 
 pub fn move_object(object: &mut Vec2<f32>, target: Vec2<f32>, speed: f32, delta_time: f32) -> f32 {
-    let difference = target - *object + Vec2::new(std::f32::EPSILON, 0.0);
-    let distance = difference.magnitude();
+    let difference = target - *object + Vec2::new(std::f32::EPSILON, std::f32::EPSILON);
+    let distance = difference.magnitude() + std::f32::EPSILON;
 
     let step_length = (speed * delta_time).min(distance) + std::f32::EPSILON;
 
     *object += difference.normalize() * step_length;
 
-    (target - *object + Vec2::new(std::f32::EPSILON, 0.0)).magnitude()
+    (target - *object + Vec2::new(std::f32::EPSILON, std::f32::EPSILON)).magnitude()
 }
 
 impl State for Game {
@@ -505,6 +522,14 @@ impl State for Game {
                 .pixel_scale(1.0)
                 .draw();
         }
+
+        // draw claw pole
+        frame.image("claw_pole")
+            .position(self.claw.position.from_iso() - Vec2::new(0.0, 3.0 - self.claw.travel_height))
+            .pivot(Anchor::BottomMiddle)
+            .depth(-(self.claw.position.from_iso() - self.claw.height).y / 1000.0 + 0.015)
+            .pixel_scale(1.0)
+            .draw();
     }
 
     fn update(&mut self, data: &StateData) -> Transition {
@@ -512,8 +537,44 @@ impl State for Game {
         let script_data = self.script_data.clone();
         let mut script_data = script_data.lock().unwrap();
         self.instruction = script_data.instruction.clone();
-        
-        let _ = self.spawn_crate(0);
+
+        for spawner in &mut self.spawners {
+            spawner.time -= data.delta_time;
+
+            if spawner.time <= 0.0 {
+                spawner.time = spawner.max_time;
+
+                let path = loop {
+                    let path = self.random.range_usize(0, spawner.paths.len() - 1);
+                    
+                    if spawner.paths[path].0 < self.random.range_i32(0, 100) {
+                        break path;
+                    }
+                };
+
+                let crate_type = loop {
+                    let crate_type = self.random.range_usize(0, spawner.paths.len() - 1);
+                    
+                    if spawner.crates[crate_type].0 <= self.random.range_i32(0, 100) {
+                        break spawner.crates[crate_type].1;
+                    }                
+                };
+
+                if self.paths[path][0].occupant.is_none() {  
+                    self.paths[path][0].occupant = Some(self.next_crate);
+         
+                    self.crates.insert(self.next_crate, Crate {
+                        position: Vec2::new(self.paths[path][0].position.x as f32,
+                                            self.paths[path][0].position.y as f32),
+                        texture: crate_type,
+                        height: 0.0,
+                        path,
+                    });
+         
+                    self.next_crate += 1;
+                }
+            }
+        }
 
         for path in &mut self.paths {
             let path_len = path.len();
@@ -627,12 +688,14 @@ impl State for Game {
                             if self.paths[path][node].occupant.is_none() {
                                 self.paths[path][node].occupant = self.claw.grabbed;
                                 self.claw.grabbed = None;
+                                self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
+                            } else {
+                                self.instruction = Instruction::Failiure;
                             }
                         } else {
                             self.claw.grabbed = None;
+                            self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
                         }
-
-                        self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
                     } else {
                         self.instruction = Instruction::Failiure;
                     }
@@ -641,9 +704,7 @@ impl State for Game {
             Instruction::None => {
                 self.move_arm(self.claw.position, self.claw.travel_height, data.delta_time);
             },
-            Instruction::Failiure => {
-                self.instruction = Instruction::None;
-            },
+            Instruction::Failiure => println!("failure"),
         }
 
         script_data.instruction = self.instruction.clone();

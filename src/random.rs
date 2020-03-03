@@ -21,13 +21,20 @@ impl Random {
         let output = (self.multiplier * self.x + self.increment) % self.modulus;
         self.x = output;
         output
-    }
+    } 
 
     pub fn range_i32(&mut self, min: i32, max: i32) -> i32 {
         let min = min.min(max);
         let range = (max - min).abs() + 1;
 
         self.next() as i32 % range + min
+    }
+    
+    pub fn range_usize(&mut self, min: usize, max: usize) -> usize {
+        let min = min.min(max);
+        let range = (max as i32 - min as i32).abs() as usize + 1;
+
+        self.next() as usize % range + min
     }
 
     pub fn range_f32(&mut self, min: f32, max: f32) -> f32 {
