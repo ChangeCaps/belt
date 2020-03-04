@@ -124,11 +124,11 @@ mod functions {
             heap.insert(index + 1, Variable::Struct(vector_fields));
             heap.insert(index + 4, Variable::String(c.texture.to_string()));
             heap.insert(index + 5, Variable::Int(*id as i32));
-            heap.insert(index + 6, Variable::Int(c.path as i32));
+            heap.insert(index + 6, Variable::Int(0));
             fields.insert("position".to_string(), 1);
             fields.insert("type".to_string(), 4);
             fields.insert("id".to_string(), 5);
-            fields.insert("belt".to_string(), 6);
+            fields.insert("target".to_string(), 6);
 
             heap.insert(index, Variable::Struct(fields));
         }
@@ -168,7 +168,6 @@ pub struct Claw {
 #[derive(Clone, Debug)]
 pub struct Crate {
     pub position: Vec2<f32>,
-    pub path: usize,
     pub height: f32,
     pub texture: &'static str,
 }
@@ -381,31 +380,30 @@ impl State for Game {
             if spawner.time <= 0.0 {
                 spawner.time = spawner.max_time;
 
-                let path = loop {
-                    let path = self.random.range_usize(0, spawner.paths.len() - 1);
+                let node = loop {
+                    let node = self.random.range_usize(0, spawner.nodes.len() - 1);
                     
-                    if spawner.paths[path].0 < self.random.range_i32(0, 100) {
-                        break path;
+                    if spawner.nodes[node].0 < self.random.range_i32(0, 100) {
+                        break node;
                     }
                 };
 
                 let crate_type = loop {
-                    let crate_type = self.random.range_usize(0, spawner.paths.len() - 1);
+                    let crate_type = self.random.range_usize(0, spawner.crates.len() - 1);
                     
                     if spawner.crates[crate_type].0 <= self.random.range_i32(0, 100) {
                         break spawner.crates[crate_type].1;
                     }                
                 };
 
-                if self.paths[path][0].occupant.is_none() {  
-                    self.paths[path][0].occupant = Some(self.next_crate);
+                if self.level.nodes[node].occupant.is_none() {  
+                    self.level.nodes[node].occupant = Some(self.next_crate);
          
                     self.crates.insert(self.next_crate, Crate {
-                        position: Vec2::new(self.paths[path][0].position.x as f32,
-                                            self.paths[path][0].position.y as f32),
+                        position: Vec2::new(self.level.nodes[node].position.x as f32,
+                                            self.level.nodes[node].position.y as f32),
                         texture: crate_type,
                         height: 0.0,
-                        path,
                     });
          
                     self.next_crate += 1;
@@ -413,25 +411,25 @@ impl State for Game {
             }
         }
 
-        for path in &mut self.paths {
-            let path_len = path.len();
+        let nodes = &mut self.level.nodes;
 
-            for i in 0..path_len - 1 {
-                if path[i + 1].moving || path[i + 1].occupant.is_none() {
-                    if let Some(crate_id) = path[i].occupant {
+        for node in 0..nodes.len() {
+            if let Some(next) = nodes[node].next {
+                if nodes[next].moving || nodes[next].occupant.is_none() {
+                    if let Some(crate_id) = nodes[node].occupant {
                         let distance = move_object(&mut self.crates.get_mut(&crate_id).expect("1").position,
-                                                   Vec2::new(path[i + 1].position.x as f32,
-                                                             path[i + 1].position.y as f32),
-                                                   path[i].speed,
+                                                   Vec2::new(nodes[next].position.x as f32,
+                                                             nodes[next].position.y as f32),
+                                                   nodes[node].speed,
                                                    data.delta_time);
-
-                        path[i].moving = true;
-
-                        if distance < 0.05 && path[i + 1].occupant.is_none() {
-                            if i == path_len - 2 {
-                                path[i].moving = false;
-                                path[i].occupant = None;
-
+    
+                        nodes[node].moving = true;
+    
+                        if distance < 0.05 && nodes[next].occupant.is_none() {
+                            if nodes[next].next.is_none() {
+                                nodes[node].moving = false;
+                                nodes[node].occupant = None;
+    
                                 let removed_crate = self.crates.remove(&crate_id).expect("2");
                                 self.falling_crates.push(FallingCrate {
                                     position: removed_crate.position.from_iso(),
@@ -440,9 +438,9 @@ impl State for Game {
                                     texture: removed_crate.texture,
                                 });
                             } else {
-                                path[i].moving = false;
-                                path[i].occupant = None;
-                                path[i + 1].occupant = Some(crate_id);
+                                nodes[node].moving = false;
+                                nodes[node].occupant = None;
+                                nodes[next].occupant = Some(crate_id);
                             }
                         }
                     }
@@ -481,13 +479,11 @@ impl State for Game {
                                                        data.delta_time);
 
                     if target_reached {
-                        'outer: for path in &mut self.paths {
-                            for node in path {
-                                if node.occupant == Some(crate_id) {
-                                    node.occupant = None;
-                                    node.moving = false;
-                                    break 'outer;
-                                }
+                        'outer: for node in &mut self.level.nodes {
+                            if node.occupant == Some(crate_id) {
+                                node.occupant = None;
+                                node.moving = false;
+                                break 'outer;
                             }
                         }
 
@@ -499,14 +495,13 @@ impl State for Game {
                 }
             },
             Instruction::Drop(target) => { 
-                let mut target_height = -7.0;
-
                 let mut target_node = None;
+                let mut target_height = 0.0;
 
-                'outer: for (path_index, path) in self.level.nodes.iter().enumerate() {
+                'outer: for (node_index, node) in self.level.nodes.iter().enumerate() {
                     if node.position == target {
-                        target_node = Some((path_index, node_index));
-                        target_height = 0.0;
+                        target_node = Some(node_index);
+                        target_height = self.level.get_height(node.position);
                         break 'outer;
                     }
                 }
@@ -519,9 +514,11 @@ impl State for Game {
                     if let Some(grabbed) = self.claw.grabbed {
                         self.crates.get_mut(&grabbed).expect("6").height = target_height; 
 
-                        if let Some((path, node)) = target_node {
-                            if self.paths[path][node].occupant.is_none() {
-                                self.paths[path][node].occupant = self.claw.grabbed;
+                        let nodes = &mut self.level.nodes;
+
+                        if let Some(node_index) = target_node {
+                            if nodes[node_index].occupant.is_none() {
+                                nodes[node_index].occupant = self.claw.grabbed;
                                 self.claw.grabbed = None;
                                 self.instruction = Instruction::Goto(Vec2::new(target.x as f32, target.y as f32));
                             } else {
