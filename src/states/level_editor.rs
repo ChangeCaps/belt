@@ -7,19 +7,29 @@ use isometric::*;
 pub struct LevelEditor {
     level: Level,
     selected_node: Option<usize>,
+    path: String,
 }
 
 impl LevelEditor {
-    pub fn new() -> LevelEditor {
+    pub fn new(path: String) -> LevelEditor {
         LevelEditor {
             level: Level::new(),
             selected_node: None,
+            path,
+        }
+    }
+
+    pub fn load(path: String) -> LevelEditor {
+        LevelEditor {
+            level: Level::load(path.clone()),
+            selected_node: None,
+            path,
         }
     }
 }
 
 impl State for LevelEditor {
-    fn draw(&self, frame: &mut Frame, data: &StateData) {
+    fn draw(&self, frame: &mut Frame, _data: &StateData) {
         self.level.draw(frame);
 
         for spawner in &self.level.spawners {
@@ -56,13 +66,32 @@ impl State for LevelEditor {
     }
 
     fn update(&mut self, data: &StateData) -> Transition {
+        if data.key_pressed(KeyCode::Return) {
+            self.level.save(self.path.clone());
+        }
+
+        if data.key_pressed(KeyCode::R) {
+            let position = data.mouse_position.into_iso(); 
+            let tile = self.level.get_tile_mut(position).unwrap();
+
+            if let Tile::Hole(_, _) | Tile::Belt(_) = tile {
+                *tile = Tile::Floor("floor".to_string());
+
+                for (i, node) in self.level.nodes.clone().iter().enumerate() {
+                    if node.position == position {
+                        self.level.remove_path(i);
+                    }
+                }
+            }
+        }
+
         if data.mouse_pressed(MouseButton::Left) {
             let position = data.mouse_position.into_iso(); 
             let tile = self.level.get_tile_mut(position).unwrap();
 
             match tile.clone() {
                 Tile::Floor(_) => {
-                    *tile = Tile::Hole("hole_back_blue", "hole_front_blue");
+                    *tile = Tile::Hole("hole_back_blue".to_string(), "hole_front_blue".to_string());
      
                     let index = self.level.nodes.len();
      
@@ -80,26 +109,26 @@ impl State for LevelEditor {
                         Spawner {
                             time: 0.0,
                             max_time: 2.0,
-                            crates: Vec::new(),
+                            crates: vec![(100, "crate_1".to_string())],
                             nodes: vec![(100, index)],
                         }
                     );
      
                     self.selected_node = Some(index);
                 },
-                Tile::Belt(_) => {
-                    *tile = Tile::Hole("hole_back_blue", "hole_front_blue");   
+                Tile::Belt(_) | Tile::Hole(_, _) => {
+                    *tile = Tile::Hole("hole_back_blue".to_string(), "hole_front_blue".to_string());
 
                     for (i, node) in self.level.nodes.clone().iter().enumerate() {
                         if node.position == position {
                             node.next.map(|node| { 
                                 self.level.remove_path(node);
-                                self.selected_node = Some(i);
                             });
+
+                            self.selected_node = Some(i);
                         }
                     }
                 },
-                _ => ()
             }
         }
 
@@ -114,7 +143,7 @@ impl State for LevelEditor {
                 if difference.magnitude() < 1.1 {
                     if let Tile::Floor(_) = self.level.get_tile(position).unwrap() { 
                         *self.level.get_tile_mut(position).unwrap() = 
-                            Tile::Hole("hole_back_blue", "hole_front_blue");
+                            Tile::Hole("hole_back_blue".to_string(), "hole_front_blue".to_string());
     
                         let index = self.level.nodes.len();
     
@@ -137,7 +166,7 @@ impl State for LevelEditor {
                             let position = self.level.nodes[node].position;
                             let tile = self.level.get_tile_mut(position).unwrap();
     
-                            *tile = Tile::Belt("belt");
+                            *tile = Tile::Belt("belt".to_string());
     
                             node = next;
                         }

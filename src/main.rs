@@ -40,10 +40,8 @@ fn main() {
 
             if args.len() > 2 {
                 if args[1] == "edit" {
-                    let mut file = std::fs::File::create(&args[2]).unwrap();
-                    
                     return Box::new(
-                        states::LevelEditor::new()
+                        states::LevelEditor::new(args[0].clone())
                     )
                 }
             }

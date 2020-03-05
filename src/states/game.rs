@@ -169,7 +169,7 @@ pub struct Claw {
 pub struct Crate {
     pub position: Vec2<f32>,
     pub height: f32,
-    pub texture: &'static str,
+    pub texture: String,
 }
 
 #[derive(Clone)]
@@ -177,7 +177,7 @@ pub struct FallingCrate {
     pub position: Vec2<f32>,
     pub speed: f32,
     pub depth: f32,
-    pub texture: &'static str,
+    pub texture: String,
 }
 
 #[derive(Clone)]
@@ -215,7 +215,7 @@ impl Game {
 
         let script_data_arc = Arc::new(Mutex::new(script_data.clone()));
 
-        let mut game = Self {
+        let game = Self {
             claw: script_data.claw,
             instruction: script_data.instruction,
             next_crate: 0,
@@ -310,7 +310,7 @@ impl State for Game {
 
         // draw crates
         for (_, c) in &self.crates {
-            frame.image(c.texture)
+            frame.image(&c.texture)
                 .position(c.position.from_iso() + Vec2::new(0.0, 8.0 + c.height))
                 .depth(-(c.position.from_iso().y - c.height) / 1000.0 + std::f32::EPSILON)
                 .pixel_scale(1.0)
@@ -319,7 +319,7 @@ impl State for Game {
 
         // draw falling crates
         for c in &self.falling_crates {
-            frame.image(c.texture)
+            frame.image(&c.texture)
                 .position(c.position + Vec2::new(0.0, 8.0))
                 .depth(c.depth + std::f32::EPSILON)
                 .pixel_scale(1.0)
@@ -383,16 +383,16 @@ impl State for Game {
                 let node = loop {
                     let node = self.random.range_usize(0, spawner.nodes.len() - 1);
                     
-                    if spawner.nodes[node].0 < self.random.range_i32(0, 100) {
-                        break node;
+                    if spawner.nodes[node].0 >= self.random.range_i32(0, 100) {
+                        break spawner.nodes[node].1;
                     }
                 };
 
                 let crate_type = loop {
                     let crate_type = self.random.range_usize(0, spawner.crates.len() - 1);
                     
-                    if spawner.crates[crate_type].0 <= self.random.range_i32(0, 100) {
-                        break spawner.crates[crate_type].1;
+                    if spawner.crates[crate_type].0 >= self.random.range_i32(0, 100) {
+                        break spawner.crates[crate_type].1.clone();
                     }                
                 };
 
@@ -403,7 +403,7 @@ impl State for Game {
                         position: Vec2::new(self.level.nodes[node].position.x as f32,
                                             self.level.nodes[node].position.y as f32),
                         texture: crate_type,
-                        height: 0.0,
+                        height: 7.0,
                     });
          
                     self.next_crate += 1;
@@ -432,7 +432,7 @@ impl State for Game {
     
                                 let removed_crate = self.crates.remove(&crate_id).expect("2");
                                 self.falling_crates.push(FallingCrate {
-                                    position: removed_crate.position.from_iso(),
+                                    position: removed_crate.position.from_iso() + Vec2::new(0.0, removed_crate.height),
                                     speed: 0.0,
                                     depth: -removed_crate.position.from_iso().y / 1000.0,
                                     texture: removed_crate.texture,
