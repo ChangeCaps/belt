@@ -3,6 +3,15 @@ use crate::*;
 use level::*;
 use isometric::*;
 
+pub enum MenuItem {
+    
+}
+
+pub struct Menu {
+    pub selected_menu_item: usize,
+    pub menu_items: Vec<MenuItem>,
+}
+
 #[derive(Clone)]
 pub struct LevelEditor {
     level: Level,
