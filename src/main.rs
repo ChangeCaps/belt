@@ -9,6 +9,7 @@ pub mod isometric;
 pub mod language;
 pub mod random;
 pub mod level;
+pub mod menu;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
@@ -41,7 +42,7 @@ fn main() {
             if args.len() > 2 {
                 if args[1] == "edit" {
                     return Box::new(
-                        states::LevelEditor::new(args[0].clone())
+                        states::LevelEditor::new(args[2].clone())
                     )
                 }
             }
