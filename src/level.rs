@@ -94,7 +94,7 @@ impl Level {
     }
 
     pub fn save(&self, path: String) {
-        let mut file = std::fs::File::create("level0.lvl").expect("failed to load file");
+        let mut file = std::fs::File::create(path).expect("failed to load file");
 
         file.write(&bincode::serialize(self).unwrap()).unwrap();
     }

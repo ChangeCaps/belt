@@ -41,7 +41,7 @@ fn main() {
             if args.len() > 2 {
                 if args[1] == "edit" {
                     return Box::new(
-                        states::LevelEditor::new(args[0].clone())
+                        states::LevelEditor::new(args[2].clone())
                     )
                 }
             }
