@@ -2,21 +2,14 @@ use fumarole::*;
 use crate::*;
 use level::*;
 use isometric::*;
-
-pub enum MenuItem {
-    
-}
-
-pub struct Menu {
-    pub selected_menu_item: usize,
-    pub menu_items: Vec<MenuItem>,
-}
+use menu::*;
 
 #[derive(Clone)]
 pub struct LevelEditor {
     level: Level,
     selected_node: Option<usize>,
     path: String,
+    menus: Vec<Menu>,
 }
 
 impl LevelEditor {
@@ -25,6 +18,31 @@ impl LevelEditor {
             level: Level::new(),
             selected_node: None,
             path,
+            menus: vec![
+                Menu::new(
+                    vec![
+                        Box::new(Button {
+                            transform: Transform {
+                                position: Vec2::new(1.0, 0.0),
+                                size: Vec2::new(20.0, 10.0),
+                                rotation: 0.0,
+                            },
+                            text: "test".to_string(),
+                            menu: Menu::new(
+                                vec![
+
+                                ],
+                                Transform::default()
+                            ),
+                        })
+                    ],
+                    Transform {
+                        position: Vec2::new(50.0, 0.0),
+                        size: Vec2::new(50.0, 100.0),
+                        rotation: 0.0,
+                    }
+                ),
+            ],        
         }
     }
 
@@ -33,6 +51,7 @@ impl LevelEditor {
             level: Level::load(path.clone()),
             selected_node: None,
             path,
+            menus: vec![],
         }
     }
 }
@@ -40,6 +59,10 @@ impl LevelEditor {
 impl State for LevelEditor {
     fn draw(&self, frame: &mut Frame, _data: &StateData) {
         self.level.draw(frame);
+
+        for menu in &self.menus {
+            menu.draw(frame, Transform::new());
+        }
 
         for spawner in &self.level.spawners {
             for (_, node) in &spawner.nodes {

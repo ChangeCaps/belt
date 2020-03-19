@@ -9,6 +9,7 @@ pub mod isometric;
 pub mod language;
 pub mod random;
 pub mod level;
+pub mod menu;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
