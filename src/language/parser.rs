@@ -649,11 +649,6 @@ pub fn parse_token_tree(
     vars: &HashMap<String, Var>,
     functions: &HashMap<String, Function>,
 ) -> Result<(Token, Var), ParseError> {
-    // function calls
-    if let Some(function_call) = parse_funtion_call(&mut string, structs, vars, functions) {
-        return function_call;
-    } 
-
     let mut lexer = Lexer::new(&mut string);
 
     if let Some(struct_ident) = lexer.get("{") {
@@ -1010,6 +1005,11 @@ pub fn parse_token_tree(
             }
         }
     }
+
+    // function calls
+    if let Some(function_call) = parse_funtion_call(&mut string, structs, vars, functions) {
+        return function_call;
+    } 
 
     let (var, var_type) = Variable::parse(string, vars)?;
 

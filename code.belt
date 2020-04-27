@@ -1,8 +1,70 @@
 goto(3, 3);
 
-while true {
+struct point {
+	x: int,
+	y: int
+}
+
+let crate_0_drop = point {
+	x: 0,
+	y: 0,
+};
+
+let crate_1_drop = point {
+	x: -2,
+	y: 0,
+};
+
+let min_crate_id = -1;
+
+while len(crates()) > 0 {
 	let crates = crates();
 	
-	grab(crates[0].id);
-	drop(2, 0);
+	let min_crate = 0;
+
+	let i = 0;
+
+	let found = false;
+
+	while i < len(crates) {
+		if crates[i].id > min_crate_id {
+			if found == false {
+				min_crate = i;
+			}
+
+			found = true;
+
+			if crates[i].id < crates[min_crate].id {
+				min_crate = i;
+			}
+		}
+
+		i = i + 1;
+	}
+
+	min_crate_id = crates[min_crate].id;
+
+	if found {
+		if crates[min_crate].type == "crate_0" {
+			if crates[min_crate].position.x != 0 {
+				if grab(crates[min_crate].id) {
+					print(crates[min_crate].id);
+					print(crates[min_crate].type);
+
+					while drop(crate_0_drop.x, crate_0_drop.y) == false {}
+				}
+			}
+		}
+
+		if crates[min_crate].type == "crate_1" {
+			if crates[min_crate].position.x != -2 {
+				if grab(crates[min_crate].id) {
+					print(crates[min_crate].id);
+					print(crates[min_crate].type);
+
+					while drop(crate_1_drop.x, crate_1_drop.y) == false {}
+				}
+			}	
+		}
+	}
 }

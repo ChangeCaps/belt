@@ -57,6 +57,7 @@ pub struct Node {
     pub position: Vec2<i32>,
     pub occupant: Option<usize>,
     pub next: Option<usize>,
+    pub accepted: Option<Vec<String>>,
     pub moving: bool,
     pub speed: f32,
 }
@@ -67,6 +68,7 @@ pub struct Spawner {
     pub max_time: f32,
     pub crates: Vec<(i32, String)>,
     pub nodes: Vec<(i32, usize)>,
+    pub color: [f32; 4],
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

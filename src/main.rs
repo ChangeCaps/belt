@@ -9,7 +9,6 @@ pub mod isometric;
 pub mod language;
 pub mod random;
 pub mod level;
-pub mod menu;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
@@ -38,6 +37,9 @@ fn main() {
             loader.load_image_from_raw(include_bytes!("../assets/crate_1.png"), PNG, "crate_1");
 
             loader.load_image_from_raw(include_bytes!("../assets/belt.png"), PNG, "belt");
+
+            // FIXME: change to load from raw
+            loader.load_font("assets/font.ttf", 500);
 
             if args.len() > 2 {
                 if args[1] == "edit" {
